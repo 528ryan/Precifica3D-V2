@@ -364,6 +364,57 @@ export function calculatePricing(input: CalculatorInput): CalculatorOutput {
   }
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Custom price analysis — given a price the user wants to charge,
+// calculate the resulting margin for a specific marketplace
+// ──────────────────────────────────────────────────────────────────────────
+
+export interface CustomPriceResult {
+  netProfit: number
+  marginPercent: number
+  fixedFeeApplied: number
+  commissionUsed: number
+}
+
+export function calculateMarginAtCustomPrice(
+  customPrice: number,
+  effectiveCost: number,
+  marketplaceKey: keyof MarketplaceToggles,
+  input: CalculatorInput,
+): CustomPriceResult {
+  const config = FEE_CONFIGS.find((c) => c.key === marketplaceKey)!
+  const taxRule = getTaxRule(input.seller.taxRegime)
+  const taxRate = taxRule.percentOnRevenue
+  const commission = getCommission(config, input)
+
+  // Fixed fee: depends on whether price crosses the threshold
+  let fixedFee: number
+  if (config.fixedFeeThreshold === 0) {
+    fixedFee = 0
+  } else if (config.fixedFeeThreshold === Infinity) {
+    fixedFee = config.fixedFee
+  } else {
+    fixedFee = customPrice < config.fixedFeeThreshold ? config.fixedFee : 0
+  }
+
+  // Low-price threshold: 50% fee rule
+  let commissionUsed = commission
+  if (config.lowPriceThreshold > 0 && customPrice < config.lowPriceThreshold) {
+    commissionUsed = config.lowPriceFeeRate
+    if (!config.keepFixedFeeOnLowPrice) fixedFee = 0
+  }
+
+  const netProfit = customPrice * (1 - commissionUsed - taxRate) - effectiveCost - fixedFee
+  const marginPercent = customPrice > 0 ? (netProfit / customPrice) * 100 : 0
+
+  return {
+    netProfit: r2(netProfit),
+    marginPercent: parseFloat(marginPercent.toFixed(2)),
+    fixedFeeApplied: r2(fixedFee),
+    commissionUsed,
+  }
+}
+
 function brl(v: number): string {
   return v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }

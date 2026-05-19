@@ -1,8 +1,12 @@
 import type { MarketplaceResult } from '@/types'
+import type { CustomPriceResult } from '@/lib/pricingCalculator'
 import Badge from '@/components/ui/Badge'
 
 interface Props {
   results: MarketplaceResult[]
+  customPriceStr: string
+  onCustomPriceChange: (v: string) => void
+  customAnalysis: Record<string, CustomPriceResult>
 }
 
 function brl(v: number): string {
@@ -26,7 +30,38 @@ function RowWarnings({ warnings }: { warnings: string[] }) {
   )
 }
 
-function ResultRow({ r }: { r: MarketplaceResult }) {
+function CustomPriceCell({ analysis }: { analysis: CustomPriceResult | undefined }) {
+  if (!analysis) {
+    return <span className="text-slate-600 text-xs">—</span>
+  }
+
+  const { netProfit, marginPercent } = analysis
+  const marginColor =
+    marginPercent < 0
+      ? 'text-red-400'
+      : marginPercent < 10
+      ? 'text-amber-400'
+      : marginPercent >= 25
+      ? 'text-emerald-400'
+      : 'text-slate-300'
+
+  return (
+    <div className="text-right">
+      <div className={`text-sm font-semibold ${marginColor}`}>{pct(marginPercent)}</div>
+      <div className={`text-xs ${netProfit < 0 ? 'text-red-400/70' : 'text-slate-500'}`}>
+        R${brl(netProfit)}/un
+      </div>
+    </div>
+  )
+}
+
+function ResultRow({
+  r,
+  customAnalysis,
+}: {
+  r: MarketplaceResult
+  customAnalysis: CustomPriceResult | undefined
+}) {
   const hasError = r.recommendedPrice === 0 && r.warnings.some((w) => w.includes('Impossível') || w.includes('inviável'))
 
   let rowClass = 'border-b border-dark-border transition-colors duration-150 hover:bg-white/[0.015]'
@@ -130,6 +165,11 @@ function ResultRow({ r }: { r: MarketplaceResult }) {
           </span>
         )}
       </td>
+
+      {/* Margem ao preço customizado */}
+      <td className="px-3 py-3 tabular-nums whitespace-nowrap">
+        <CustomPriceCell analysis={customAnalysis} />
+      </td>
     </tr>
   )
 }
@@ -145,15 +185,44 @@ const HEADERS = [
   { label: 'Margem', align: 'right' },
 ]
 
-export default function MarketplaceTable({ results }: Props) {
+export default function MarketplaceTable({ results, customPriceStr, onCustomPriceChange, customAnalysis }: Props) {
   if (results.length === 0) return null
+
+  const hasCustomPrice = customPriceStr.trim() !== ''
 
   return (
     <div className="rounded-xl border border-dark-border bg-dark-surface overflow-hidden">
-      <div className="px-4 py-3 border-b border-dark-border">
+      <div className="px-4 py-3 border-b border-dark-border flex items-center justify-between gap-4 flex-wrap">
         <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
           Comparativo de Canais
         </h3>
+
+        {/* Custom price input */}
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-slate-500 whitespace-nowrap">
+            Simular preço de venda:
+          </label>
+          <div className="relative">
+            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-slate-500">R$</span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={customPriceStr}
+              onChange={(e) => onCustomPriceChange(e.target.value)}
+              placeholder="0,00"
+              className="w-28 pl-7 pr-2 py-1 text-xs rounded-lg bg-dark-bg border border-dark-border text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500/60 tabular-nums"
+            />
+          </div>
+          {hasCustomPrice && (
+            <button
+              onClick={() => onCustomPriceChange('')}
+              className="text-slate-600 hover:text-slate-400 text-xs transition-colors"
+              title="Limpar"
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="overflow-x-auto">
@@ -170,11 +239,21 @@ export default function MarketplaceTable({ results }: Props) {
                   {h.label}
                 </th>
               ))}
+              {/* Dynamic header for custom price column */}
+              <th className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap text-right">
+                {hasCustomPrice ? (
+                  <span className="text-indigo-400">
+                    Margem @ R${customPriceStr}
+                  </span>
+                ) : (
+                  <span className="text-slate-700">Simular Preço</span>
+                )}
+              </th>
             </tr>
           </thead>
           <tbody>
             {results.map((r) => (
-              <ResultRow key={r.key} r={r} />
+              <ResultRow key={r.key} r={r} customAnalysis={customAnalysis[r.key]} />
             ))}
           </tbody>
         </table>

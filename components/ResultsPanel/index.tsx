@@ -1,6 +1,8 @@
 'use client'
 
+import { useState, useMemo } from 'react'
 import type { CalculatorInput, CalculatorOutput } from '@/types'
+import { calculateMarginAtCustomPrice, type CustomPriceResult } from '@/lib/pricingCalculator'
 import CostBreakdownCard from './CostBreakdownCard'
 import MarketplaceTable from './MarketplaceTable'
 import CapacityCard from './CapacityCard'
@@ -13,6 +15,18 @@ interface Props {
 
 export default function ResultsPanel({ output, input }: Props) {
   const { validationErrors, results, costBreakdown, baseCostPerUnit, effectiveCostWithFailures, effectiveTariff, unitsPerMonth } = output
+
+  const [customPriceStr, setCustomPriceStr] = useState('')
+
+  const customAnalysis = useMemo<Record<string, CustomPriceResult>>(() => {
+    const price = parseFloat(customPriceStr.replace(',', '.'))
+    if (!price || price <= 0) return {}
+    const map: Record<string, CustomPriceResult> = {}
+    for (const r of results) {
+      map[r.key] = calculateMarginAtCustomPrice(price, effectiveCostWithFailures, r.key, input)
+    }
+    return map
+  }, [customPriceStr, results, effectiveCostWithFailures, input])
 
   // ── Validation error state ────────────────────────────────────────────────
   if (validationErrors.length > 0) {
@@ -57,7 +71,12 @@ export default function ResultsPanel({ output, input }: Props) {
         failureRate={input.production.failureRatePercent}
       />
 
-      <MarketplaceTable results={results} />
+      <MarketplaceTable
+        results={results}
+        customPriceStr={customPriceStr}
+        onCustomPriceChange={setCustomPriceStr}
+        customAnalysis={customAnalysis}
+      />
 
       <CapacityCard
         unitsPerMonth={unitsPerMonth}
