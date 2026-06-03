@@ -11,59 +11,27 @@ interface Props {
 }
 
 export default function ProductionSection({ value, onChange }: Props) {
-  return (
-    <CollapsibleSection title="Produção" icon="🏭">
-      {/* Print time */}
-      <div>
-        <p className="text-xs font-medium text-slate-400 mb-1.5">Tempo de impressão</p>
-        <div className="grid grid-cols-2 gap-2">
-          <div className="flex items-center gap-2">
-            <input
-              type="number"
-              value={value.printTimeHours}
-              min={0}
-              max={999}
-              step={1}
-              onChange={(e) =>
-                onChange({ printTimeHours: parseInt(e.target.value) || 0 })
-              }
-              className="input-base text-center"
-            />
-            <span className="text-xs text-slate-500 shrink-0">h</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              type="number"
-              value={value.printTimeMinutes}
-              min={0}
-              max={59}
-              step={1}
-              onChange={(e) =>
-                onChange({ printTimeMinutes: parseInt(e.target.value) || 0 })
-              }
-              className="input-base text-center"
-            />
-            <span className="text-xs text-slate-500 shrink-0">min</span>
-          </div>
-        </div>
-        {value.printTimeHours === 0 && value.printTimeMinutes === 0 && (
-          <p className="text-xs text-red-400 mt-1">⚠ Defina o tempo de impressão.</p>
-        )}
-      </div>
+  const filamentCost = (value.filamentPricePerKg / 1000) * value.filamentWeightGrams
+  const baseCost = filamentCost + value.postProcessingCost + value.otherDirectCosts
+  const effectiveCost = baseCost / (1 - value.failureRatePercent / 100)
 
+  function brl(n: number) {
+    return n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  }
+
+  return (
+    <CollapsibleSection title="Custo do Produto" icon="📦">
       {/* Filament */}
       <div className="grid grid-cols-2 gap-3">
         <Field label="Filamento" hint="R$/kg">
           <div className="flex items-center gap-1.5">
-            <span className="text-xs text-slate-500">R$</span>
+            <span className="text-xs text-[#6b6b8a]">R$</span>
             <input
               type="number"
               value={value.filamentPricePerKg}
               min={0}
               step={5}
-              onChange={(e) =>
-                onChange({ filamentPricePerKg: parseFloat(e.target.value) || 0 })
-              }
+              onChange={(e) => onChange({ filamentPricePerKg: parseFloat(e.target.value) || 0 })}
               className="input-base"
             />
           </div>
@@ -75,62 +43,39 @@ export default function ProductionSection({ value, onChange }: Props) {
               value={value.filamentWeightGrams}
               min={0}
               step={5}
-              onChange={(e) =>
-                onChange({ filamentWeightGrams: parseFloat(e.target.value) || 0 })
-              }
+              onChange={(e) => onChange({ filamentWeightGrams: parseFloat(e.target.value) || 0 })}
               className="input-base"
             />
-            <span className="text-xs text-slate-500 shrink-0">g</span>
+            <span className="text-xs text-[#6b6b8a] shrink-0">g</span>
           </div>
         </Field>
       </div>
 
-      {/* Labor */}
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Mão de obra" hint="R$/h">
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-slate-500">R$</span>
-            <input
-              type="number"
-              value={value.laborRatePerHour}
-              min={0}
-              step={5}
-              onChange={(e) =>
-                onChange({ laborRatePerHour: parseFloat(e.target.value) || 0 })
-              }
-              className="input-base"
-            />
-          </div>
-        </Field>
-        <Field label="Horas MO">
-          <div className="flex items-center gap-1.5">
-            <input
-              type="number"
-              value={value.laborHours}
-              min={0}
-              step={0.5}
-              onChange={(e) =>
-                onChange({ laborHours: parseFloat(e.target.value) || 0 })
-              }
-              className="input-base"
-            />
-            <span className="text-xs text-slate-500 shrink-0">h</span>
-          </div>
-        </Field>
-      </div>
-
-      {/* Post processing */}
-      <Field label="Pós-processamento" hint="R$ fixo">
+      {/* Post-processing */}
+      <Field label="Pós-processamento" hint="R$ fixo (acabamento, pintura…)">
         <div className="flex items-center gap-1.5">
-          <span className="text-xs text-slate-500">R$</span>
+          <span className="text-xs text-[#6b6b8a]">R$</span>
           <input
             type="number"
             value={value.postProcessingCost}
             min={0}
             step={1}
-            onChange={(e) =>
-              onChange({ postProcessingCost: parseFloat(e.target.value) || 0 })
-            }
+            onChange={(e) => onChange({ postProcessingCost: parseFloat(e.target.value) || 0 })}
+            className="input-base"
+          />
+        </div>
+      </Field>
+
+      {/* Other direct costs */}
+      <Field label="Outros custos diretos" hint="R$ — embalagem, etiqueta, suporte…">
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-[#6b6b8a]">R$</span>
+          <input
+            type="number"
+            value={value.otherDirectCosts}
+            min={0}
+            step={0.5}
+            onChange={(e) => onChange({ otherDirectCosts: parseFloat(e.target.value) || 0 })}
             className="input-base"
           />
         </div>
@@ -145,6 +90,14 @@ export default function ProductionSection({ value, onChange }: Props) {
         max={50}
         displayValue={`${value.failureRatePercent}%`}
       />
+
+      {/* Live effective cost */}
+      <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-white/[0.03] border border-[#1e1e32]">
+        <span className="text-xs text-[#6b6b8a]">Custo efetivo calculado</span>
+        <span className="text-sm font-mono font-bold text-[#e8e8f0]">
+          R${brl(effectiveCost)}
+        </span>
+      </div>
     </CollapsibleSection>
   )
 }

@@ -1,148 +1,70 @@
-import type { MarketplaceToggles } from '@/types'
+import type { FeeRule } from '@/types'
 
-// ── Fee configuration per marketplace channel ──────────────────────────────
+// ── Marketplace fee configuration (março 2026) ──────────────────────────────
 
-export interface FeeConfig {
-  key: keyof MarketplaceToggles
+export interface MarketplaceFeeConfig {
+  key: string
   label: string
-  shortLabel: string
-  defaultCommissionRate: number      // decimal
-  fixedFee: number                   // R$
-  fixedFeeThreshold: number          // price below which fixed fee applies (Infinity = always)
-  lowPriceThreshold: number          // price below which 50% rule applies (0 = n/a)
-  lowPriceFeeRate: number            // usually 0.5
-  keepFixedFeeOnLowPrice: boolean
-  blockForCpf: boolean               // if true + regime=cpf → exclude result entirely
-  requiresCnpjWarning: boolean       // if true + regime=cpf/mei → show warning
-  commissionDescription: string
+  rules: FeeRule[]         // ordenadas por minPrice crescente
+  requiresCNPJ: boolean
+  notes?: string
 }
 
-// ── Constants ──────────────────────────────────────────────────────────────
-
-const ML_FIXED_FEE = 5.5
-const ML_FIXED_FEE_THRESHOLD = 79
-const ML_LOW_PRICE_THRESHOLD = 12.5
-const ML_LOW_PRICE_FEE_RATE = 0.5
-
-const SHOPEE_CPF_FIXED_FEE = 7.0
-const SHOPEE_LOW_PRICE_THRESHOLD = 10.0
-const SHOPEE_LOW_PRICE_FEE_RATE = 0.5
-
-const SHOPEE_CNPJ_FIXED_FEE = 4.0
-
-const TIKTOK_FIXED_FEE = 2.0
-const TIKTOK_FIXED_FEE_THRESHOLD = 79
-
-// ── Fee configs ────────────────────────────────────────────────────────────
-
-export const FEE_CONFIGS: FeeConfig[] = [
+export const MARKETPLACE_FEES: MarketplaceFeeConfig[] = [
   {
-    key: 'mlClassico',
+    key: 'ml_classico',
     label: 'Mercado Livre Clássico',
-    shortLabel: 'ML Clássico',
-    defaultCommissionRate: 0.12,
-    fixedFee: ML_FIXED_FEE,
-    fixedFeeThreshold: ML_FIXED_FEE_THRESHOLD,
-    lowPriceThreshold: ML_LOW_PRICE_THRESHOLD,
-    lowPriceFeeRate: ML_LOW_PRICE_FEE_RATE,
-    keepFixedFeeOnLowPrice: false,
-    blockForCpf: false,
-    requiresCnpjWarning: false,
-    commissionDescription: '10–14% (ajustável) + R$5,50 fixo se < R$79',
+    requiresCNPJ: false,
+    notes: 'Comissão ajustável 10–14%. Custo operacional (peso/dimensão) informado manualmente no Seller Center.',
+    rules: [
+      { label: 'Padrão', minPrice: 0, maxPrice: Infinity, commissionPercent: 12, fixedFee: 0 },
+    ],
+    // commissionPercent é sobrescrito pelo slider do usuário (10–14)
   },
   {
-    key: 'mlPremium',
+    key: 'ml_premium',
     label: 'Mercado Livre Premium',
-    shortLabel: 'ML Premium',
-    defaultCommissionRate: 0.16,
-    fixedFee: ML_FIXED_FEE,
-    fixedFeeThreshold: ML_FIXED_FEE_THRESHOLD,
-    lowPriceThreshold: ML_LOW_PRICE_THRESHOLD,
-    lowPriceFeeRate: ML_LOW_PRICE_FEE_RATE,
-    keepFixedFeeOnLowPrice: false,
-    blockForCpf: false,
-    requiresCnpjWarning: false,
-    commissionDescription: '15–19% (ajustável) + R$5,50 fixo se < R$79',
+    requiresCNPJ: false,
+    notes: 'Comissão ajustável 15–19%. Parcelamento 12× sem juros para o comprador.',
+    rules: [
+      { label: 'Padrão', minPrice: 0, maxPrice: Infinity, commissionPercent: 16, fixedFee: 0 },
+    ],
+    // commissionPercent é sobrescrito pelo slider do usuário (15–19)
   },
   {
-    key: 'shopeeCpfSemFrete',
-    label: 'Shopee CPF',
-    shortLabel: 'Shopee CPF',
-    defaultCommissionRate: 0.14,
-    fixedFee: SHOPEE_CPF_FIXED_FEE,
-    fixedFeeThreshold: Infinity,
-    lowPriceThreshold: SHOPEE_LOW_PRICE_THRESHOLD,
-    lowPriceFeeRate: SHOPEE_LOW_PRICE_FEE_RATE,
-    keepFixedFeeOnLowPrice: true,
-    blockForCpf: false,
-    requiresCnpjWarning: false,
-    commissionDescription: '14% + R$7,00 fixo',
+    key: 'shopee',
+    label: 'Shopee',
+    requiresCNPJ: false,
+    notes: 'Frete Grátis obrigatório desde 01/03/2026. Faixa determinada pelo preço final do produto.',
+    rules: [
+      { label: 'Faixa 1 — até R$7,99',        minPrice: 0,   maxPrice: 7.99,    commissionPercent: 50, fixedFee: 0  },
+      { label: 'Faixa 2 — R$8 a R$79,99',     minPrice: 8,   maxPrice: 79.99,   commissionPercent: 20, fixedFee: 4  },
+      { label: 'Faixa 3 — R$80 a R$99,99',    minPrice: 80,  maxPrice: 99.99,   commissionPercent: 14, fixedFee: 16 },
+      { label: 'Faixa 4 — R$100 a R$199,99',  minPrice: 100, maxPrice: 199.99,  commissionPercent: 14, fixedFee: 20 },
+      { label: 'Faixa 5 — R$200+',            minPrice: 200, maxPrice: Infinity, commissionPercent: 14, fixedFee: 26 },
+    ],
   },
   {
-    key: 'shopeeCpfComFrete',
-    label: 'Shopee CPF — Frete Grátis Extra',
-    shortLabel: 'Shopee Frete',
-    defaultCommissionRate: 0.20,
-    fixedFee: SHOPEE_CPF_FIXED_FEE,
-    fixedFeeThreshold: Infinity,
-    lowPriceThreshold: SHOPEE_LOW_PRICE_THRESHOLD,
-    lowPriceFeeRate: SHOPEE_LOW_PRICE_FEE_RATE,
-    keepFixedFeeOnLowPrice: true,
-    blockForCpf: false,
-    requiresCnpjWarning: false,
-    commissionDescription: '20% + R$7,00 fixo',
-  },
-  {
-    key: 'shopeeCnpj',
-    label: 'Shopee CNPJ',
-    shortLabel: 'Shopee CNPJ',
-    defaultCommissionRate: 0.14,   // 12% plataforma + 2% transação
-    fixedFee: SHOPEE_CNPJ_FIXED_FEE,
-    fixedFeeThreshold: Infinity,
-    lowPriceThreshold: 0,
-    lowPriceFeeRate: 0,
-    keepFixedFeeOnLowPrice: false,
-    blockForCpf: false,
-    requiresCnpjWarning: true,
-    commissionDescription: '12% + 2% transação + R$4,00 fixo',
-  },
-  {
-    key: 'tiktokShop',
+    key: 'tiktok',
     label: 'TikTok Shop',
-    shortLabel: 'TikTok',
-    defaultCommissionRate: 0.06,
-    fixedFee: TIKTOK_FIXED_FEE,
-    fixedFeeThreshold: TIKTOK_FIXED_FEE_THRESHOLD,
-    lowPriceThreshold: 0,
-    lowPriceFeeRate: 0,
-    keepFixedFeeOnLowPrice: false,
-    blockForCpf: true,             // CPF → bloquear resultado
-    requiresCnpjWarning: true,
-    commissionDescription: '6% + R$2,00 fixo se < R$79',
+    requiresCNPJ: true,
+    notes: 'Requer CNPJ. Taxa fixa R$4 para produtos abaixo de R$79 (desde fev/2026).',
+    rules: [
+      { label: 'Abaixo de R$79', minPrice: 0,  maxPrice: 78.99,   commissionPercent: 6, fixedFee: 4 },
+      { label: 'R$79 ou mais',   minPrice: 79, maxPrice: Infinity, commissionPercent: 6, fixedFee: 0 },
+    ],
   },
   {
-    key: 'vendaDireta',
+    key: 'venda_direta',
     label: 'Venda Direta',
-    shortLabel: 'Direta',
-    defaultCommissionRate: 0.0,
-    fixedFee: 0,
-    fixedFeeThreshold: 0,
-    lowPriceThreshold: 0,
-    lowPriceFeeRate: 0,
-    keepFixedFeeOnLowPrice: false,
-    blockForCpf: false,
-    requiresCnpjWarning: false,
-    commissionDescription: 'Sem comissão de marketplace — apenas imposto',
+    requiresCNPJ: false,
+    notes: 'Sem comissão de marketplace. Apenas imposto do regime fiscal.',
+    rules: [
+      { label: 'Sem taxas', minPrice: 0, maxPrice: Infinity, commissionPercent: 0, fixedFee: 0 },
+    ],
   },
 ]
 
-// ── ML commission ranges ────────────────────────────────────────────────────
-
+// ── ML commission ranges ─────────────────────────────────────────────────────
 export const ML_CLASSICO_RANGE = { min: 10, max: 14, default: 12 }
 export const ML_PREMIUM_RANGE  = { min: 15, max: 19, default: 16 }
-
-export function getFeeConfig(key: keyof MarketplaceToggles): FeeConfig {
-  const config = FEE_CONFIGS.find((c) => c.key === key)
-  if (!config) throw new Error(`Marketplace desconhecido: ${key}`)
-  return config
-}

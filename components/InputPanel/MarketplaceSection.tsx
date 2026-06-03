@@ -1,43 +1,39 @@
 'use client'
 
-import type { CalculatorInput, MarketplaceToggles, TaxRegime } from '@/types'
-import { FEE_CONFIGS, ML_CLASSICO_RANGE, ML_PREMIUM_RANGE } from '@/lib/marketplaceFees'
+import type { MarketplaceToggles, MarketplaceOverrides, TaxRegime } from '@/types'
+import { MARKETPLACE_FEES } from '@/lib/marketplaceFees'
+import { ML_CLASSICO_RANGE, ML_PREMIUM_RANGE } from '@/lib/marketplaceFees'
 import CollapsibleSection from '@/components/ui/CollapsibleSection'
 import Toggle from '@/components/ui/Toggle'
 import Slider from '@/components/ui/Slider'
 import Badge from '@/components/ui/Badge'
+import Field from './Field'
 
 interface Props {
   marketplaces: MarketplaceToggles
+  overrides: MarketplaceOverrides
   taxRegime: TaxRegime
-  mlClassicoOverride?: number
-  mlPremiumOverride?: number
   onToggle: (key: keyof MarketplaceToggles, value: boolean) => void
-  onMlClassicoOverride: (v: number) => void
-  onMlPremiumOverride: (v: number) => void
+  onOverride: (partial: Partial<MarketplaceOverrides>) => void
 }
 
-// Marketplace icons
-const ICONS: Partial<Record<keyof MarketplaceToggles, string>> = {
-  mlClassico: '🛒',
-  mlPremium: '⭐',
-  shopeeCpfSemFrete: '🛍️',
-  shopeeCpfComFrete: '🚚',
-  shopeeCnpj: '🏪',
-  tiktokShop: '🎵',
-  vendaDireta: '🤝',
+const ICONS: Record<string, string> = {
+  ml_classico:  '🛒',
+  ml_premium:   '⭐',
+  shopee:       '🛍️',
+  tiktok:       '🎵',
+  venda_direta: '🤝',
 }
 
 export default function MarketplaceSection({
   marketplaces,
+  overrides,
   taxRegime,
-  mlClassicoOverride,
-  mlPremiumOverride,
   onToggle,
-  onMlClassicoOverride,
-  onMlPremiumOverride,
+  onOverride,
 }: Props) {
   const activeCount = Object.values(marketplaces).filter(Boolean).length
+  const hasCNPJ = taxRegime !== 'cpf'
 
   return (
     <CollapsibleSection
@@ -50,10 +46,10 @@ export default function MarketplaceSection({
       }
     >
       <div className="space-y-2">
-        {FEE_CONFIGS.map((config) => {
-          const isEnabled = marketplaces[config.key]
-          const isCpf = taxRegime === 'cpf'
-          const isBlocked = config.blockForCpf && isCpf
+        {MARKETPLACE_FEES.map((config) => {
+          const key = config.key as keyof MarketplaceToggles
+          const isEnabled = marketplaces[key]
+          const isBlocked = config.requiresCNPJ && !hasCNPJ
           const icon = ICONS[config.key] ?? '🏬'
 
           return (
@@ -61,16 +57,17 @@ export default function MarketplaceSection({
               key={config.key}
               className={`rounded-lg border transition-colors duration-150 overflow-hidden ${
                 isEnabled
-                  ? 'border-indigo-500/30 bg-indigo-500/5'
-                  : 'border-dark-border bg-white/[0.01]'
+                  ? 'border-[#4f46e5]/30 bg-[#4f46e5]/5'
+                  : 'border-[#1e1e32] bg-white/[0.01]'
               }`}
             >
+              {/* Toggle row */}
               <div className="flex items-center justify-between px-3 py-2.5">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <span className="text-base">{icon}</span>
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-sm font-medium text-slate-200 truncate">
+                      <span className="text-sm font-medium text-[#e8e8f0] truncate">
                         {config.label}
                       </span>
                       {isBlocked && (
@@ -78,42 +75,62 @@ export default function MarketplaceSection({
                       )}
                     </div>
                     {isEnabled && (
-                      <p className="text-xs text-slate-500 mt-0.5 truncate">
-                        {config.commissionDescription}
+                      <p className="text-xs text-[#6b6b8a] mt-0.5 truncate">
+                        {config.notes}
                       </p>
                     )}
                   </div>
                 </div>
                 <Toggle
                   checked={isEnabled}
-                  onChange={(v) => onToggle(config.key, v)}
+                  onChange={(v) => onToggle(key, v)}
                 />
               </div>
 
-              {/* ML commission sliders */}
-              {isEnabled && config.key === 'mlClassico' && (
-                <div className="px-3 pb-3">
-                  <Slider
-                    label="Comissão Clássico"
-                    value={mlClassicoOverride ?? ML_CLASSICO_RANGE.default}
-                    onChange={onMlClassicoOverride}
-                    min={ML_CLASSICO_RANGE.min}
-                    max={ML_CLASSICO_RANGE.max}
-                    displayValue={`${mlClassicoOverride ?? ML_CLASSICO_RANGE.default}%`}
-                  />
+              {/* ML Clássico — commission slider + operational cost */}
+              {isEnabled && config.key === 'ml_classico' && (
+                <div className="px-3 pb-3 space-y-3 border-t border-[#1e1e32]/50">
+                  <div className="pt-2">
+                    <Slider
+                      label="Comissão"
+                      value={overrides.mlClassicoCommission}
+                      onChange={(v) => onOverride({ mlClassicoCommission: v })}
+                      min={ML_CLASSICO_RANGE.min}
+                      max={ML_CLASSICO_RANGE.max}
+                      displayValue={`${overrides.mlClassicoCommission}%`}
+                    />
+                  </div>
+                  <Field label="Custo operacional" hint="R$/un. — consulte o Seller Center (peso + dimensão)">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs text-[#6b6b8a]">R$</span>
+                      <input
+                        type="number"
+                        value={overrides.mlOperationalCostPerUnit}
+                        min={0}
+                        step={0.5}
+                        onChange={(e) =>
+                          onOverride({ mlOperationalCostPerUnit: parseFloat(e.target.value) || 0 })
+                        }
+                        className="input-base"
+                      />
+                    </div>
+                  </Field>
                 </div>
               )}
 
-              {isEnabled && config.key === 'mlPremium' && (
-                <div className="px-3 pb-3">
-                  <Slider
-                    label="Comissão Premium"
-                    value={mlPremiumOverride ?? ML_PREMIUM_RANGE.default}
-                    onChange={onMlPremiumOverride}
-                    min={ML_PREMIUM_RANGE.min}
-                    max={ML_PREMIUM_RANGE.max}
-                    displayValue={`${mlPremiumOverride ?? ML_PREMIUM_RANGE.default}%`}
-                  />
+              {/* ML Premium — commission slider */}
+              {isEnabled && config.key === 'ml_premium' && (
+                <div className="px-3 pb-3 border-t border-[#1e1e32]/50">
+                  <div className="pt-2">
+                    <Slider
+                      label="Comissão"
+                      value={overrides.mlPremiumCommission}
+                      onChange={(v) => onOverride({ mlPremiumCommission: v })}
+                      min={ML_PREMIUM_RANGE.min}
+                      max={ML_PREMIUM_RANGE.max}
+                      displayValue={`${overrides.mlPremiumCommission}%`}
+                    />
+                  </div>
                 </div>
               )}
             </div>

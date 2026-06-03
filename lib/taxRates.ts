@@ -1,4 +1,4 @@
-import type { TaxRegime, FlagColor } from '@/types'
+import type { TaxRegime } from '@/types'
 
 // ── Tax Rules ──────────────────────────────────────────────────────────────
 
@@ -56,28 +56,4 @@ export function getTaxRule(regime: TaxRegime): TaxRule {
   const rule = TAX_RULES.find((r) => r.regime === regime)
   if (!rule) throw new Error(`Regime desconhecido: ${regime}`)
   return rule
-}
-
-// ── Energy Flags (ANEEL — março 2026) ─────────────────────────────────────
-
-export interface EnergyFlag {
-  id: FlagColor
-  label: string
-  emoji: string
-  surchargePerKwh: number  // R$/kWh adicional
-}
-
-export const ENERGY_FLAGS: EnergyFlag[] = [
-  { id: 'verde',     label: 'Verde',               emoji: '🟢', surchargePerKwh: 0.0000  },
-  { id: 'amarela',   label: 'Amarela',              emoji: '🟡', surchargePerKwh: 0.01880 },
-  { id: 'vermelha1', label: 'Vermelha – Patamar 1', emoji: '🔴', surchargePerKwh: 0.04460 },
-  { id: 'vermelha2', label: 'Vermelha – Patamar 2', emoji: '🔴', surchargePerKwh: 0.07870 },
-]
-
-export const DEFAULT_ENERGY_FLAG = ENERGY_FLAGS[0]
-
-export function getEnergyFlag(id: FlagColor): EnergyFlag {
-  const flag = ENERGY_FLAGS.find((f) => f.id === id)
-  if (!flag) throw new Error(`Bandeira desconhecida: ${id}`)
-  return flag
 }

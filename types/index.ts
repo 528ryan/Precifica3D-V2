@@ -1,32 +1,3 @@
-// ── Printer ────────────────────────────────────────────────────────────────
-export interface PrinterPreset {
-  id: string
-  name: string
-  avgWatts: number  // consumo médio real durante impressão (não pico)
-}
-
-// ── Production ─────────────────────────────────────────────────────────────
-export interface ProductionInput {
-  printer: PrinterPreset
-  printTimeHours: number
-  printTimeMinutes: number
-  filamentPricePerKg: number
-  filamentWeightGrams: number
-  laborRatePerHour: number
-  laborHours: number
-  postProcessingCost: number
-  failureRatePercent: number  // 0–50
-}
-
-// ── Energy ─────────────────────────────────────────────────────────────────
-export type FlagColor = 'verde' | 'amarela' | 'vermelha1' | 'vermelha2'
-
-export interface EnergyInput {
-  baseTariffPerKwh: number
-  flagSurchargePerKwh: number
-  flagColor: FlagColor
-}
-
 // ── Seller ─────────────────────────────────────────────────────────────────
 export type TaxRegime =
   | 'cpf'
@@ -35,33 +6,123 @@ export type TaxRegime =
   | 'lucro_presumido'
   | 'lucro_real'
 
+// ── Production ─────────────────────────────────────────────────────────────
+export interface ProductionInput {
+  filamentPricePerKg: number       // R$/kg
+  filamentWeightGrams: number      // gramas por peça
+  postProcessingCost: number       // R$ fixo (acabamento, pintura etc.)
+  otherDirectCosts: number         // R$ — outros custos diretos
+  failureRatePercent: number       // 0–50
+}
+
 export interface SellerInput {
   taxRegime: TaxRegime
 }
 
-// ── Marketplace ────────────────────────────────────────────────────────────
+// ── Marketplace ─────────────────────────────────────────────────────────────
 export interface MarketplaceToggles {
-  mlClassico: boolean
-  mlPremium: boolean
-  shopeeCpfSemFrete: boolean
-  shopeeCpfComFrete: boolean
-  shopeeCnpj: boolean
-  tiktokShop: boolean
-  vendaDireta: boolean
+  ml_classico: boolean
+  ml_premium: boolean
+  shopee: boolean
+  tiktok: boolean
+  venda_direta: boolean
 }
 
-// ── Calculator Input ───────────────────────────────────────────────────────
+export interface MarketplaceOverrides {
+  mlClassicoCommission: number       // inteiro: 10–14
+  mlPremiumCommission: number        // inteiro: 15–19
+  mlOperationalCostPerUnit: number   // R$ — custo operacional (peso/dimensão) por unidade
+}
+
+// ── Calculator Input ────────────────────────────────────────────────────────
 export interface CalculatorInput {
   production: ProductionInput
-  energy: EnergyInput
   seller: SellerInput
   marketplaces: MarketplaceToggles
+  overrides: MarketplaceOverrides
   desiredMarginPercent: number
-  mlClassicoCommissionOverride?: number  // como inteiro: ex: 12
-  mlPremiumCommissionOverride?: number
 }
 
-// ── Presets / Kits ─────────────────────────────────────────────────────────
+// ── Cost Breakdown ──────────────────────────────────────────────────────────
+export interface CostBreakdown {
+  filamentCost: number
+  postProcessingCost: number
+  otherDirectCosts: number
+  failureRatePercent: number
+  baseCost: number
+  effectiveCostPerUnit: number
+}
+
+// ── Fee Rule (for new marketplace model) ────────────────────────────────────
+export interface FeeRule {
+  label: string
+  minPrice: number
+  maxPrice: number          // Infinity for last tier
+  commissionPercent: number // whole number, e.g. 20
+  fixedFee: number          // R$
+}
+
+// ── Price Candidate ─────────────────────────────────────────────────────────
+export interface PriceCandidate {
+  rank: number              // 1/2/3 for top 3; 0 for "user price" outside top 3
+  price: number
+  netProfitPerUnit: number
+  marginPercent: number
+  rule: FeeRule
+  rationale: string
+  isUserMargin?: boolean
+  isMathematicallyImpossible?: boolean
+}
+
+// ── Margin Suggestion ────────────────────────────────────────────────────────
+export interface MarginSuggestion {
+  conservative: number
+  balanced: number
+  aggressive: number
+  conservativeRationale: string
+  balancedRationale: string
+  aggressiveRationale: string
+}
+
+// ── Boundary Warning ─────────────────────────────────────────────────────────
+export interface BoundaryWarning {
+  message: string
+  profitDifference: number
+  currentPrice: number
+  suggestedPrice: number
+}
+
+// ── Marketplace Result ───────────────────────────────────────────────────────
+export interface MarketplaceResult {
+  key: string
+  label: string
+  activeRule: FeeRule
+  candidates: PriceCandidate[]
+  marginSuggestion: MarginSuggestion
+  boundaryWarnings: BoundaryWarning[]
+  isBestPrice: boolean
+  isBestProfit: boolean
+  isBlocked: boolean
+  blockedReason?: string
+  requiresCNPJ: boolean
+  notes?: string
+}
+
+// ── Calculator Output ────────────────────────────────────────────────────────
+export interface CalculatorOutput {
+  costBreakdown: CostBreakdown
+  results: MarketplaceResult[]
+  errors: string[]
+}
+
+// ── Presets / Kits ───────────────────────────────────────────────────────────
+export interface KitItem {
+  id: string
+  name: string
+  quantity: number
+  unitCost: number
+}
+
 export interface SavedPreset {
   id: string
   name: string
@@ -69,55 +130,9 @@ export interface SavedPreset {
   input: CalculatorInput
 }
 
-export interface KitItem {
-  id: string
-  name: string
-  presetId?: string
-  presetName?: string
-  quantity: number
-  unitCost: number
-}
-
 export interface SavedKit {
   id: string
   name: string
   createdAt: string
   items: KitItem[]
-}
-
-// ── Calculator Output ──────────────────────────────────────────────────────
-export interface MarketplaceResult {
-  key: keyof MarketplaceToggles
-  label: string
-  commissionPercent: number
-  fixedFeeR$: number
-  taxPercent: number
-  breakevenPrice: number
-  recommendedPrice: number
-  netProfitPerUnit: number
-  effectiveMarginPercent: number
-  warnings: string[]
-  isBestPrice: boolean
-  isBestProfit: boolean
-}
-
-export interface CostBreakdown {
-  filament: number
-  electricity: number
-  labor: number
-  postProcessing: number
-}
-
-export interface CalculatorOutput {
-  validationErrors: string[]
-  totalPrintHoursPerMonth: number     // 720 fixo
-  effectivePrintHoursPerMonth: number
-  baseCostPerUnit: number
-  costBreakdown: CostBreakdown
-  effectiveCostWithFailures: number
-  effectiveTariff: number
-  unitsPerMonth: number
-  results: MarketplaceResult[]
-  bestPrice: keyof MarketplaceToggles | null
-  bestProfit: keyof MarketplaceToggles | null
 }

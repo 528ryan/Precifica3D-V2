@@ -2,12 +2,30 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Design tokens ────────────────────────────────────────────────────── */
+:root {
+  --bg-base:      #080810;
+  --bg-surface:   #0f0f1a;
+  --bg-elevated:  #161624;
+  --border:       #1e1e32;
+  --border-focus: #4f46e5;
+  --text-primary: #e8e8f0;
+  --text-muted:   #6b6b8a;
+  --accent:       #4f46e5;
+  --positive:     #10b981;
+  --warning:      #f59e0b;
+  --negative:     #ef4444;
+  --rank-gold:    #fbbf24;
+  --rank-silver:  #94a3b8;
+  --rank-bronze:  #c07a3a;
+}
+
 /* ── Shared input style ───────────────────────────────────────────────── */
 @layer components {
   .input-base {
-    @apply w-full bg-[#0d0d14] border border-[#1e1e2e] rounded-lg px-3 py-1.5
-           text-sm text-slate-200 placeholder-slate-600
-           focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500
+    @apply w-full bg-[#0d0d14] border border-[#1e1e32] rounded-lg px-3 py-1.5
+           text-sm text-[#e8e8f0] placeholder-[#6b6b8a]
+           focus:outline-none focus:ring-1 focus:ring-[#4f46e5] focus:border-[#4f46e5]
            transition-colors duration-150;
   }
 
@@ -21,7 +39,7 @@ input[type='range'] {
   -webkit-appearance: none;
   appearance: none;
   height: 4px;
-  background: #1e1e2e;
+  background: #1e1e32;
   border-radius: 9999px;
   outline: none;
   cursor: pointer;
@@ -32,25 +50,25 @@ input[type='range']::-webkit-slider-thumb {
   appearance: none;
   width: 16px;
   height: 16px;
-  background: #6366f1;
+  background: #4f46e5;
   border-radius: 50%;
-  border: 2px solid #0a0a0f;
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
+  border: 2px solid #080810;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.3);
   transition: box-shadow 150ms ease, background 150ms ease;
   cursor: pointer;
 }
 
 input[type='range']::-webkit-slider-thumb:hover {
-  background: #818cf8;
-  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.25);
+  background: #6366f1;
+  box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.25);
 }
 
 input[type='range']::-moz-range-thumb {
   width: 16px;
   height: 16px;
-  background: #6366f1;
+  background: #4f46e5;
   border-radius: 50%;
-  border: 2px solid #0a0a0f;
+  border: 2px solid #080810;
   cursor: pointer;
 }
 
@@ -61,11 +79,11 @@ input[type='range']::-moz-range-thumb {
 }
 
 ::-webkit-scrollbar-track {
-  background: #0a0a0f;
+  background: #080810;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1e1e2e;
+  background: #1e1e32;
   border-radius: 9999px;
 }
 
@@ -79,8 +97,8 @@ input[type='range']::-moz-range-thumb {
 }
 
 body {
-  background-color: #0a0a0f;
-  color: #f1f5f9;
+  background-color: #080810;
+  color: #e8e8f0;
 }
 
 /* ── Number input hide arrows ─────────────────────────────────────────── */

@@ -1,117 +1,460 @@
 import type {
   CalculatorInput,
   CalculatorOutput,
+  CostBreakdown,
   MarketplaceResult,
-  MarketplaceToggles,
+  PriceCandidate,
+  MarginSuggestion,
+  BoundaryWarning,
+  FeeRule,
 } from '@/types'
-import { FEE_CONFIGS, type FeeConfig } from '@/lib/marketplaceFees'
+import { MARKETPLACE_FEES, type MarketplaceFeeConfig } from '@/lib/marketplaceFees'
 import { getTaxRule } from '@/lib/taxRates'
 
-// ──────────────────────────────────────────────────────────────────────────
-// Price solver — algebraic, with iterative threshold handling
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function brl(n: number): string {
+  return n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function r2(n: number): number {
+  return Math.round(n * 100) / 100
+}
+
+function ruleAt(price: number, config: MarketplaceFeeConfig): FeeRule {
+  return (
+    config.rules.find((r) => price >= r.minPrice && price <= r.maxPrice) ??
+    config.rules[config.rules.length - 1]
+  )
+}
+
+// ── Price resolver ───────────────────────────────────────────────────────────
 //
-// Formula: finalPrice = (effectiveCost + fixedFee) / (1 - commission - tax - margin)
-// ──────────────────────────────────────────────────────────────────────────
+// Formula:  price = (cost + fixedFee + mlOpCost) / (1 - commission - tax - margin)
+//
+// Since fixedFee and commissionPercent come from the fee rule that applies at
+// the computed price (circular dependency), we resolve iteratively.
+// Starting from a very high price ensures convergence from the top tier down.
 
-interface PriceSolveResult {
-  price: number
-  fixedFeeApplied: number
-  commissionUsed: number
-  errorMsg?: string
-  warnings: string[]
-}
-
-function solvePrice(
-  effectiveCost: number,
-  config: FeeConfig,
-  commissionRate: number,
-  taxRate: number,
-  marginRate: number,
-): PriceSolveResult {
-  const warnings: string[] = []
-
-  if (commissionRate + taxRate + marginRate >= 1.0) {
-    return {
-      price: 0,
-      fixedFeeApplied: 0,
-      commissionUsed: commissionRate,
-      errorMsg: `Impossível precificar: comissão (${pct(commissionRate)}) + imposto (${pct(taxRate)}) + margem (${pct(marginRate)}) ≥ 100%`,
-      warnings,
-    }
+function resolvePrice(
+  cost: number,
+  taxDecimal: number,
+  marginPercent: number,
+  config: MarketplaceFeeConfig,
+  mlOpCost: number = 0,
+  maxIterations: number = 10,
+): { price: number; rule: FeeRule; impossible: boolean } {
+  const baseDenom = 1 - marginPercent / 100 - taxDecimal
+  if (baseDenom <= 0) {
+    return { price: 0, rule: config.rules[config.rules.length - 1], impossible: true }
   }
 
-  const denom = 1 - commissionRate - taxRate - marginRate
+  let estimatedPrice = 1e6 // start high → converges from last (highest-price) rule
 
-  // ── Step 1: Determine if fixed fee applies (iterative self-consistency) ──
-  let fixedFee: number
+  for (let i = 0; i < maxIterations; i++) {
+    const rule = ruleAt(estimatedPrice, config)
+    const denom = baseDenom - rule.commissionPercent / 100
 
-  if (config.fixedFeeThreshold === Infinity || config.fixedFeeThreshold === 0) {
-    // fixedFeeThreshold=Infinity → always apply; =0 → never apply
-    fixedFee = config.fixedFeeThreshold === 0 ? 0 : config.fixedFee
+    if (denom <= 0) {
+      return { price: 0, rule, impossible: true }
+    }
+
+    const newPrice = (cost + rule.fixedFee + mlOpCost) / denom
+    const newRule = ruleAt(newPrice, config)
+
+    if (newRule.label === rule.label) {
+      return { price: r2(Math.max(0, newPrice)), rule: newRule, impossible: false }
+    }
+    estimatedPrice = newPrice
+  }
+
+  // Fallback after max iterations
+  const rule = ruleAt(estimatedPrice, config)
+  return { price: r2(Math.max(0, estimatedPrice)), rule, impossible: false }
+}
+
+// ── Net profit for a given fixed price ───────────────────────────────────────
+//
+// When price comes from resolvePrice(cost, tax, margin, …):
+//   netProfit = price × margin/100  (algebraically exact)
+//
+// For boundary analysis (fixed price, not from the formula):
+//   netProfit = price × (1 − commission − tax) − cost − fixedFee − mlOpCost
+
+function netProfitForFixed(
+  price: number,
+  rule: FeeRule,
+  taxDecimal: number,
+  cost: number,
+  mlOpCost: number,
+): number {
+  return price * (1 - rule.commissionPercent / 100 - taxDecimal) - cost - rule.fixedFee - mlOpCost
+}
+
+// ── Margin suggestions ───────────────────────────────────────────────────────
+
+function calcMarginSuggestion(
+  cost: number,
+  taxDecimal: number,
+  config: MarketplaceFeeConfig,
+  mlOpCost: number,
+): MarginSuggestion {
+  let conservative = -1
+  let balanced = -1
+  let aggressive = -1
+
+  for (let m = 1; m <= 80; m++) {
+    const { price, impossible } = resolvePrice(cost, taxDecimal, m, config, mlOpCost)
+    if (impossible || price <= 0) continue
+
+    // netProfit = price × m/100 (exact for resolvePrice-derived prices)
+    const netProfit = price * m / 100
+
+    if (conservative < 0 && netProfit > cost * 0.2) conservative = m
+    if (balanced < 0 && m >= 35) balanced = m
+    if (price < cost * 3.5) aggressive = m // keep updating → find max valid m
+  }
+
+  if (conservative < 0) conservative = 5
+  if (balanced < 0) balanced = 35
+  if (aggressive < 0) aggressive = Math.max(conservative, 30)
+
+  const consRes = resolvePrice(cost, taxDecimal, conservative, config, mlOpCost)
+  const consProfit = consRes.impossible ? 0 : r2(consRes.price * conservative / 100)
+  const aggRes = resolvePrice(cost, taxDecimal, aggressive, config, mlOpCost)
+  const aggPrice = aggRes.impossible ? 0 : aggRes.price
+
+  return {
+    conservative,
+    balanced,
+    aggressive,
+    conservativeRationale: `Margem mínima sustentável (${conservative}%). Lucro R$${brl(consProfit)} cobre 20% do custo direto.`,
+    balancedRationale: `Referência equilibrada: ${balanced}% do preço de venda para produto físico no Brasil.`,
+    aggressiveRationale: `Margem máxima competitiva. Preço R$${brl(aggPrice)} ≤ 3,5× o custo direto.`,
+  }
+}
+
+// ── Candidate generation ─────────────────────────────────────────────────────
+
+function generateCandidates(
+  cost: number,
+  taxDecimal: number,
+  desiredMarginPercent: number,
+  config: MarketplaceFeeConfig,
+  mlOpCost: number,
+  marginSuggestion: MarginSuggestion,
+): PriceCandidate[] {
+  // Collect all candidate entries
+  const pool: PriceCandidate[] = []
+
+  function push(
+    price: number,
+    rule: FeeRule,
+    rationale: string,
+    isUserMargin = false,
+    impossible = false,
+  ) {
+    const netProfit = impossible ? 0 : r2(netProfitForFixed(price, rule, taxDecimal, cost, mlOpCost))
+    const marginPct = impossible || price <= 0 ? 0 : r2(netProfit / price * 100)
+    pool.push({
+      rank: 0,
+      price: impossible ? 0 : price,
+      netProfitPerUnit: netProfit,
+      marginPercent: marginPct,
+      rule,
+      rationale,
+      isUserMargin,
+      isMathematicallyImpossible: impossible,
+    })
+  }
+
+  // (a) User's desired margin
+  const userRes = resolvePrice(cost, taxDecimal, desiredMarginPercent, config, mlOpCost)
+  if (userRes.impossible) {
+    push(0, config.rules[0],
+      `Impossível: comissão + imposto + margem (${desiredMarginPercent}%) ≥ 100%.`,
+      true, true)
   } else {
-    const estNoFee = effectiveCost / denom
-    const feeA = estNoFee < config.fixedFeeThreshold ? config.fixedFee : 0
-    const priceA = (effectiveCost + feeA) / denom
-    const feeB = priceA < config.fixedFeeThreshold ? config.fixedFee : 0
-    if (feeB !== feeA) {
-      const priceB = (effectiveCost + feeB) / denom
-      fixedFee = priceB < config.fixedFeeThreshold ? config.fixedFee : 0
+    const { price: uP, rule: uR } = userRes
+    push(uP, uR,
+      `Margem de ${desiredMarginPercent}%. ${uR.label} — ${uR.commissionPercent}%` +
+      (uR.fixedFee > 0 ? ` + R$${brl(uR.fixedFee)} fixa` : '') + '.',
+      true)
+  }
+
+  // (b) Boundary analysis — evaluate each faixa transition point
+  for (let i = 0; i < config.rules.length - 1; i++) {
+    const B = config.rules[i].maxPrice
+    const rA = config.rules[i]         // rule at B (current faixa)
+    const rB = config.rules[i + 1]     // rule at B + 0.01 (next faixa)
+
+    const profitAtB    = netProfitForFixed(B,        rA, taxDecimal, cost, mlOpCost)
+    const profitAboveB = netProfitForFixed(B + 0.01, rB, taxDecimal, cost, mlOpCost)
+
+    if (profitAtB >= profitAboveB) {
+      const diff = r2(profitAtB - profitAboveB)
+      push(B, rA,
+        `R$${brl(B)} mantém ${rA.label} (${rA.commissionPercent}%` +
+        (rA.fixedFee > 0 ? `+R$${brl(rA.fixedFee)}` : '') +
+        `). Cruzar para R$${brl(B + 0.01)} = ${rB.label}: lucro cai R$${brl(diff)}.`)
     } else {
-      fixedFee = feeA
+      const diff = r2(profitAboveB - profitAtB)
+      push(B + 0.01, rB,
+        `R$${brl(B + 0.01)} entra em ${rB.label} (${rB.commissionPercent}%` +
+        (rB.fixedFee > 0 ? `+R$${brl(rB.fixedFee)}` : '') +
+        `). Lucro sobe R$${brl(diff)} vs ficar na faixa anterior.`)
     }
   }
 
-  const priceNormal = (effectiveCost + fixedFee) / denom
+  // (c) Margin suggestion candidates
+  const suggestionEntries: [string, number, string][] = [
+    ['conservative', marginSuggestion.conservative, marginSuggestion.conservativeRationale],
+    ['balanced',     marginSuggestion.balanced,     marginSuggestion.balancedRationale],
+    ['aggressive',   marginSuggestion.aggressive,   marginSuggestion.aggressiveRationale],
+  ]
+  for (const [, m, rationale] of suggestionEntries) {
+    if (m > 0) {
+      const res = resolvePrice(cost, taxDecimal, m, config, mlOpCost)
+      if (!res.impossible) push(res.price, res.rule, rationale)
+    }
+  }
 
-  // ── Step 2: Low-price threshold check (Shopee < R$10, ML < R$12.50) ────
-  if (config.lowPriceThreshold > 0 && priceNormal < config.lowPriceThreshold - 1e-9) {
-    const denomLow = 1 - config.lowPriceFeeRate - taxRate - marginRate
+  // Separate user entry and non-user entries
+  const userEntry = pool.find((c) => c.isUserMargin)
+  const others = pool.filter((c) => !c.isUserMargin && !c.isMathematicallyImpossible)
 
-    if (denomLow <= 0) {
-      return {
-        price: 0,
-        fixedFeeApplied: 0,
-        commissionUsed: config.lowPriceFeeRate,
-        errorMsg: `Preço abaixo do limiar R$${config.lowPriceThreshold.toFixed(2)}: margem + impostos ≥ 50%`,
-        warnings,
-      }
+  // Deduplicate by price (keep highest netProfit for same rounded price)
+  const deduped = new Map<string, PriceCandidate>()
+  for (const c of others) {
+    const pk = c.price.toFixed(2)
+    const existing = deduped.get(pk)
+    if (!existing || c.netProfitPerUnit > existing.netProfitPerUnit) {
+      deduped.set(pk, c)
+    }
+  }
+
+  // Top 3 by netProfitPerUnit DESC
+  const top3 = Array.from(deduped.values())
+    .sort((a, b) => b.netProfitPerUnit - a.netProfitPerUnit)
+    .slice(0, 3)
+
+  // Assign ranks and mark user's price if it coincides
+  const result: PriceCandidate[] = top3.map((c, i) => ({
+    ...c,
+    rank: i + 1,
+    isUserMargin:
+      userEntry &&
+      !userEntry.isMathematicallyImpossible &&
+      c.price.toFixed(2) === userEntry.price.toFixed(2)
+        ? true
+        : false,
+  }))
+
+  // Append user's candidate if not already in top 3
+  if (userEntry) {
+    const userPriceInTop3 =
+      !userEntry.isMathematicallyImpossible &&
+      top3.some((c) => c.price.toFixed(2) === userEntry.price.toFixed(2))
+
+    if (!userPriceInTop3) {
+      result.push({ ...userEntry, rank: 0 })
+    }
+  }
+
+  return result
+}
+
+// ── Boundary warnings ─────────────────────────────────────────────────────────
+
+function generateBoundaryWarnings(
+  cost: number,
+  taxDecimal: number,
+  config: MarketplaceFeeConfig,
+  mlOpCost: number,
+  userPrice: number,
+): BoundaryWarning[] {
+  const warnings: BoundaryWarning[] = []
+
+  for (let i = 0; i < config.rules.length - 1; i++) {
+    const B  = config.rules[i].maxPrice
+    const rA = config.rules[i]
+    const rB = config.rules[i + 1]
+
+    const profitAtB    = netProfitForFixed(B,        rA, taxDecimal, cost, mlOpCost)
+    const profitAboveB = netProfitForFixed(B + 0.01, rB, taxDecimal, cost, mlOpCost)
+    const diff = r2(Math.abs(profitAtB - profitAboveB))
+
+    if (diff <= 1.0) continue
+
+    const betterIsBoundary   = profitAtB >= profitAboveB
+    const userIsAboveBoundary = userPrice > B
+
+    if (userIsAboveBoundary && betterIsBoundary) {
+      warnings.push({
+        message: `⚡ R$${brl(B)} (${rA.label}) = lucro +R$${brl(diff)} por peça`,
+        profitDifference: diff,
+        currentPrice: userPrice,
+        suggestedPrice: B,
+      })
+    } else if (!userIsAboveBoundary && !betterIsBoundary) {
+      warnings.push({
+        message: `⚡ R$${brl(B + 0.01)} (${rB.label}) = lucro +R$${brl(diff)} por peça`,
+        profitDifference: diff,
+        currentPrice: userPrice,
+        suggestedPrice: B + 0.01,
+      })
+    }
+  }
+
+  return warnings
+}
+
+// ── Main export ───────────────────────────────────────────────────────────────
+
+export function calculatePricing(input: CalculatorInput): CalculatorOutput {
+  const { production, seller, marketplaces, overrides, desiredMarginPercent } = input
+  const errors: string[] = []
+
+  // Validation
+  if (production.filamentWeightGrams <= 0) {
+    errors.push('Peso do filamento deve ser maior que zero.')
+  }
+  if (production.filamentPricePerKg < 0) {
+    errors.push('Preço do filamento não pode ser negativo.')
+  }
+
+  // Cost breakdown
+  const filamentCost       = r2((production.filamentPricePerKg / 1000) * production.filamentWeightGrams)
+  const postProcessingCost = r2(production.postProcessingCost)
+  const otherDirectCosts   = r2(production.otherDirectCosts)
+  const baseCost           = r2(filamentCost + postProcessingCost + otherDirectCosts)
+  const failureRate        = Math.min(Math.max(production.failureRatePercent, 0), 99)
+  const effectiveCostPerUnit = r2(baseCost / (1 - failureRate / 100))
+
+  const costBreakdown: CostBreakdown = {
+    filamentCost,
+    postProcessingCost,
+    otherDirectCosts,
+    failureRatePercent: failureRate,
+    baseCost,
+    effectiveCostPerUnit,
+  }
+
+  if (errors.length > 0) {
+    return { costBreakdown, results: [], errors }
+  }
+
+  const taxRule    = getTaxRule(seller.taxRegime)
+  const taxDecimal = taxRule.percentOnRevenue
+  const hasCNPJ    = seller.taxRegime !== 'cpf'
+
+  const results: MarketplaceResult[] = []
+  const activeKeys = (Object.keys(marketplaces) as (keyof typeof marketplaces)[])
+    .filter((k) => marketplaces[k])
+
+  for (const key of activeKeys) {
+    const feeConfig = MARKETPLACE_FEES.find((f) => f.key === key)
+    if (!feeConfig) continue
+
+    // CNPJ gate
+    if (feeConfig.requiresCNPJ && !hasCNPJ) {
+      results.push({
+        key,
+        label: feeConfig.label,
+        activeRule: feeConfig.rules[0],
+        candidates: [],
+        marginSuggestion: {
+          conservative: 0, balanced: 0, aggressive: 0,
+          conservativeRationale: '', balancedRationale: '', aggressiveRationale: '',
+        },
+        boundaryWarnings: [],
+        isBestPrice: false,
+        isBestProfit: false,
+        isBlocked: true,
+        blockedReason: 'Requer CNPJ. Regime fiscal atual (CPF) não é permitido neste canal.',
+        requiresCNPJ: true,
+        notes: feeConfig.notes,
+      })
+      continue
     }
 
-    const fixedFeeLow = config.keepFixedFeeOnLowPrice ? config.fixedFee : 0
-    const priceLow = (effectiveCost + fixedFeeLow) / denomLow
+    // Apply ML commission overrides
+    let configToUse = feeConfig
+    let mlOpCost = 0
 
-    if (priceLow < config.lowPriceThreshold - 1e-9) {
-      warnings.push(`Regra especial aplicada: taxa = 50% do preço (preço < R$${config.lowPriceThreshold.toFixed(2)})`)
-      return {
-        price: priceLow,
-        fixedFeeApplied: fixedFeeLow,
-        commissionUsed: config.lowPriceFeeRate,
-        warnings,
+    if (key === 'ml_classico') {
+      configToUse = {
+        ...feeConfig,
+        rules: feeConfig.rules.map((r) => ({ ...r, commissionPercent: overrides.mlClassicoCommission })),
+      }
+      mlOpCost = overrides.mlOperationalCostPerUnit
+    } else if (key === 'ml_premium') {
+      configToUse = {
+        ...feeConfig,
+        rules: feeConfig.rules.map((r) => ({ ...r, commissionPercent: overrides.mlPremiumCommission })),
+      }
+      mlOpCost = overrides.mlOperationalCostPerUnit
+    }
+
+    const marginSuggestion = calcMarginSuggestion(effectiveCostPerUnit, taxDecimal, configToUse, mlOpCost)
+    const candidates       = generateCandidates(effectiveCostPerUnit, taxDecimal, desiredMarginPercent, configToUse, mlOpCost, marginSuggestion)
+
+    // Active rule: from user's candidate (or rank 1 as fallback)
+    const userC    = candidates.find((c) => c.isUserMargin && !c.isMathematicallyImpossible)
+                  ?? candidates.find((c) => c.rank === 1)
+    const activeRule = userC?.rule ?? configToUse.rules[0]
+    const userPrice  = userC?.price ?? 0
+
+    const boundaryWarnings = generateBoundaryWarnings(effectiveCostPerUnit, taxDecimal, configToUse, mlOpCost, userPrice)
+
+    results.push({
+      key,
+      label: feeConfig.label,
+      activeRule,
+      candidates,
+      marginSuggestion,
+      boundaryWarnings,
+      isBestPrice: false,
+      isBestProfit: false,
+      isBlocked: false,
+      requiresCNPJ: feeConfig.requiresCNPJ,
+      notes: feeConfig.notes,
+    })
+  }
+
+  // Mark best price / best profit
+  const nonBlocked = results.filter((r) => !r.isBlocked)
+  if (nonBlocked.length > 0) {
+    const top1Price  = (r: MarketplaceResult) => r.candidates.find((c) => c.rank === 1)?.price          ?? Infinity
+    const top1Profit = (r: MarketplaceResult) => r.candidates.find((c) => c.rank === 1)?.netProfitPerUnit ?? -Infinity
+
+    const minPrice  = Math.min(...nonBlocked.map(top1Price))
+    const maxProfit = Math.max(...nonBlocked.map(top1Profit))
+
+    for (const r of results) {
+      if (r.isBlocked) continue
+      const c = r.candidates.find((c) => c.rank === 1)
+      if (c && !c.isMathematicallyImpossible) {
+        r.isBestPrice  = c.price          === minPrice
+        r.isBestProfit = c.netProfitPerUnit === maxProfit
       }
     }
   }
 
-  return { price: priceNormal, fixedFeeApplied: fixedFee, commissionUsed: commissionRate, warnings }
+  return { costBreakdown, results, errors }
 }
 
-function pct(d: number): string {
-  return `${Math.round(d * 100)}%`
-}
-
-function r2(v: number): number {
-  return Math.round(v * 100) / 100
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Kit pricing (public — used by KitBuilder)
-// ──────────────────────────────────────────────────────────────────────────
+// ── Kit pricing ───────────────────────────────────────────────────────────────
 
 export interface KitPriceResult {
-  key: keyof MarketplaceToggles
+  key: string
   label: string
-  price: number
-  netProfit: number
-  effectiveMargin: number
+  recommendedPrice: number
+  netProfitPerKit: number
+  marginPercent: number
+  rule: FeeRule
+  isBlocked: boolean
+  blockedReason?: string
   errorMsg?: string
 }
 
@@ -119,302 +462,52 @@ export function calculateKitPricing(
   kitTotalCost: number,
   input: CalculatorInput,
 ): KitPriceResult[] {
-  const taxRule = getTaxRule(input.seller.taxRegime)
-  const taxRate = taxRule.percentOnRevenue
-  const marginRate = input.desiredMarginPercent / 100
+  const { seller, marketplaces, overrides, desiredMarginPercent } = input
+  const taxRule    = getTaxRule(seller.taxRegime)
+  const taxDecimal = taxRule.percentOnRevenue
+  const hasCNPJ    = seller.taxRegime !== 'cpf'
 
-  return FEE_CONFIGS
-    .filter((c) => input.marketplaces[c.key])
-    .filter((c) => !(c.blockForCpf && input.seller.taxRegime === 'cpf'))
-    .map((config) => {
-      const commission = getCommission(config, input)
-      const solved = solvePrice(kitTotalCost, config, commission, taxRate, marginRate)
+  const activeKeys = (Object.keys(marketplaces) as (keyof typeof marketplaces)[])
+    .filter((k) => marketplaces[k])
 
-      if (solved.errorMsg) {
-        return { key: config.key, label: config.label, price: 0, netProfit: 0, effectiveMargin: 0, errorMsg: solved.errorMsg }
-      }
+  const results: KitPriceResult[] = []
 
-      const netProfit = solved.price * (1 - solved.commissionUsed - taxRate) - kitTotalCost - solved.fixedFeeApplied
-      const effectiveMargin = solved.price > 0 ? (netProfit / solved.price) * 100 : 0
+  for (const key of activeKeys) {
+    const feeConfig = MARKETPLACE_FEES.find((f) => f.key === key)
+    if (!feeConfig) continue
 
-      return {
-        key: config.key,
-        label: config.label,
-        price: r2(solved.price),
-        netProfit: r2(netProfit),
-        effectiveMargin: parseFloat(effectiveMargin.toFixed(2)),
-      }
-    })
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Helper: resolve commission for a config
-// ──────────────────────────────────────────────────────────────────────────
-
-function getCommission(config: FeeConfig, input: CalculatorInput): number {
-  if (config.key === 'mlClassico' && input.mlClassicoCommissionOverride !== undefined) {
-    return input.mlClassicoCommissionOverride / 100
-  }
-  if (config.key === 'mlPremium' && input.mlPremiumCommissionOverride !== undefined) {
-    return input.mlPremiumCommissionOverride / 100
-  }
-  return config.defaultCommissionRate
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Main export
-// ──────────────────────────────────────────────────────────────────────────
-
-export function calculatePricing(input: CalculatorInput): CalculatorOutput {
-  const validationErrors: string[] = []
-
-  // ── Validations ──────────────────────────────────────────────────────────
-  const printHours =
-    input.production.printTimeHours + input.production.printTimeMinutes / 60
-
-  if (printHours <= 0) {
-    validationErrors.push('Tempo de impressão deve ser maior que zero.')
-  }
-
-  if (
-    input.production.printer.id === 'custom' &&
-    input.production.printer.avgWatts <= 0
-  ) {
-    validationErrors.push('Informe o consumo em Watts da impressora personalizada.')
-  }
-
-  const effectiveTariff =
-    input.energy.baseTariffPerKwh + input.energy.flagSurchargePerKwh
-
-  // ── Cost breakdown ───────────────────────────────────────────────────────
-  const filament =
-    (input.production.filamentPricePerKg / 1000) * input.production.filamentWeightGrams
-
-  const electricity =
-    (input.production.printer.avgWatts / 1000) * printHours * effectiveTariff
-
-  const labor =
-    input.production.laborRatePerHour * input.production.laborHours
-
-  const postProcessing = input.production.postProcessingCost
-
-  const baseCostPerUnit = filament + electricity + labor + postProcessing
-
-  const failureRate = Math.min(Math.max(input.production.failureRatePercent, 0), 99)
-  const effectiveCostWithFailures = baseCostPerUnit / (1 - failureRate / 100)
-
-  // ── Monthly capacity (720h = 30 × 24) ───────────────────────────────────
-  const MONTHLY_HOURS = 720
-  const unitsPerMonth =
-    printHours > 0 ? Math.floor(MONTHLY_HOURS / printHours) : 0
-
-  const effectivePrintHoursPerMonth = MONTHLY_HOURS * (1 - failureRate / 100)
-
-  // ── Early return if validation failed ───────────────────────────────────
-  if (validationErrors.length > 0) {
-    return {
-      validationErrors,
-      totalPrintHoursPerMonth: MONTHLY_HOURS,
-      effectivePrintHoursPerMonth,
-      baseCostPerUnit,
-      costBreakdown: { filament, electricity, labor, postProcessing },
-      effectiveCostWithFailures,
-      effectiveTariff,
-      unitsPerMonth,
-      results: [],
-      bestPrice: null,
-      bestProfit: null,
-    }
-  }
-
-  // ── Per-marketplace pricing ──────────────────────────────────────────────
-  const taxRule = getTaxRule(input.seller.taxRegime)
-  const taxRate = taxRule.percentOnRevenue
-  const marginRate = input.desiredMarginPercent / 100
-
-  const results: MarketplaceResult[] = []
-
-  for (const config of FEE_CONFIGS) {
-    if (!input.marketplaces[config.key]) continue
-
-    // TikTok with CPF → block
-    if (config.blockForCpf && input.seller.taxRegime === 'cpf') continue
-
-    const commission = getCommission(config, input)
-    const solved = solvePrice(
-      effectiveCostWithFailures,
-      config,
-      commission,
-      taxRate,
-      marginRate,
-    )
-
-    const warnings: string[] = [...solved.warnings]
-
-    // CNPJ warning for CPF/MEI
-    if (
-      config.requiresCnpjWarning &&
-      (input.seller.taxRegime === 'cpf' || input.seller.taxRegime === 'mei')
-    ) {
-      warnings.push('Requer CNPJ ativo')
-    }
-
-    if (solved.errorMsg) {
-      results.push({
-        key: config.key,
-        label: config.label,
-        commissionPercent: Math.round(commission * 100),
-        fixedFeeR$: config.fixedFee,
-        taxPercent: Math.round(taxRate * 100),
-        breakevenPrice: 0,
-        recommendedPrice: 0,
-        netProfitPerUnit: 0,
-        effectiveMarginPercent: 0,
-        warnings: [...warnings, solved.errorMsg],
-        isBestPrice: false,
-        isBestProfit: false,
-      })
+    if (feeConfig.requiresCNPJ && !hasCNPJ) {
+      results.push({ key, label: feeConfig.label, recommendedPrice: 0, netProfitPerKit: 0, marginPercent: 0, rule: feeConfig.rules[0], isBlocked: true, blockedReason: 'Requer CNPJ.' })
       continue
     }
 
-    const finalPrice = solved.price
-    const fixedFeeApplied = solved.fixedFeeApplied
-    const commissionUsed = solved.commissionUsed
+    let configToUse = feeConfig
+    let mlOpCost = 0
 
-    const denomBE = 1 - commissionUsed - taxRate
-    const breakevenPrice =
-      denomBE > 0
-        ? r2((effectiveCostWithFailures + fixedFeeApplied) / denomBE)
-        : 0
-
-    const netProfitPerUnit = r2(
-      finalPrice * (1 - commissionUsed - taxRate) -
-        effectiveCostWithFailures -
-        fixedFeeApplied,
-    )
-
-    const effectiveMarginPercent = parseFloat(
-      (finalPrice > 0 ? (netProfitPerUnit / finalPrice) * 100 : 0).toFixed(2),
-    )
-
-    // MEI monthly revenue warning
-    const projectedMonthlyRevenue = unitsPerMonth * finalPrice
-    if (
-      input.seller.taxRegime === 'mei' &&
-      projectedMonthlyRevenue > 6750
-    ) {
-      warnings.push(
-        `Receita projetada R$${brl(projectedMonthlyRevenue)}/mês ultrapassa o limite MEI (R$6.750)`,
-      )
+    if (key === 'ml_classico') {
+      configToUse = { ...feeConfig, rules: feeConfig.rules.map((r) => ({ ...r, commissionPercent: overrides.mlClassicoCommission })) }
+      mlOpCost = overrides.mlOperationalCostPerUnit
+    } else if (key === 'ml_premium') {
+      configToUse = { ...feeConfig, rules: feeConfig.rules.map((r) => ({ ...r, commissionPercent: overrides.mlPremiumCommission })) }
+      mlOpCost = overrides.mlOperationalCostPerUnit
     }
 
+    const resolved = resolvePrice(kitTotalCost, taxDecimal, desiredMarginPercent, configToUse, mlOpCost)
+    if (resolved.impossible) {
+      results.push({ key, label: feeConfig.label, recommendedPrice: 0, netProfitPerKit: 0, marginPercent: 0, rule: configToUse.rules[0], isBlocked: false, errorMsg: 'Impossível com a margem atual.' })
+      continue
+    }
+
+    const netProfit = r2(resolved.price * desiredMarginPercent / 100)
     results.push({
-      key: config.key,
-      label: config.label,
-      commissionPercent: Math.round(commissionUsed * 100),
-      fixedFeeR$: r2(fixedFeeApplied),
-      taxPercent: Math.round(taxRate * 100),
-      breakevenPrice,
-      recommendedPrice: r2(finalPrice),
-      netProfitPerUnit,
-      effectiveMarginPercent,
-      warnings,
-      isBestPrice: false,
-      isBestProfit: false,
+      key, label: feeConfig.label,
+      recommendedPrice: resolved.price,
+      netProfitPerKit: netProfit,
+      marginPercent: resolved.price > 0 ? r2(netProfit / resolved.price * 100) : 0,
+      rule: resolved.rule,
+      isBlocked: false,
     })
   }
 
-  // ── Badges ───────────────────────────────────────────────────────────────
-  const valid = results.filter((r) => r.recommendedPrice > 0)
-
-  if (valid.length > 0) {
-    const minPrice = Math.min(...valid.map((r) => r.recommendedPrice))
-    const maxProfit = Math.max(...valid.map((r) => r.netProfitPerUnit))
-
-    for (const r of results) {
-      if (r.recommendedPrice > 0) {
-        r.isBestPrice = r.recommendedPrice === minPrice
-        r.isBestProfit = r.netProfitPerUnit === maxProfit
-      }
-    }
-  }
-
-  const bestPrice =
-    valid.find((r) => r.isBestPrice)?.key ?? null
-  const bestProfit =
-    valid.find((r) => r.isBestProfit)?.key ?? null
-
-  return {
-    validationErrors,
-    totalPrintHoursPerMonth: MONTHLY_HOURS,
-    effectivePrintHoursPerMonth,
-    baseCostPerUnit: r2(baseCostPerUnit),
-    costBreakdown: {
-      filament: r2(filament),
-      electricity: r2(electricity),
-      labor: r2(labor),
-      postProcessing: r2(postProcessing),
-    },
-    effectiveCostWithFailures: r2(effectiveCostWithFailures),
-    effectiveTariff,
-    unitsPerMonth,
-    results,
-    bestPrice,
-    bestProfit,
-  }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Custom price analysis — given a price the user wants to charge,
-// calculate the resulting margin for a specific marketplace
-// ──────────────────────────────────────────────────────────────────────────
-
-export interface CustomPriceResult {
-  netProfit: number
-  marginPercent: number
-  fixedFeeApplied: number
-  commissionUsed: number
-}
-
-export function calculateMarginAtCustomPrice(
-  customPrice: number,
-  effectiveCost: number,
-  marketplaceKey: keyof MarketplaceToggles,
-  input: CalculatorInput,
-): CustomPriceResult {
-  const config = FEE_CONFIGS.find((c) => c.key === marketplaceKey)!
-  const taxRule = getTaxRule(input.seller.taxRegime)
-  const taxRate = taxRule.percentOnRevenue
-  const commission = getCommission(config, input)
-
-  // Fixed fee: depends on whether price crosses the threshold
-  let fixedFee: number
-  if (config.fixedFeeThreshold === 0) {
-    fixedFee = 0
-  } else if (config.fixedFeeThreshold === Infinity) {
-    fixedFee = config.fixedFee
-  } else {
-    fixedFee = customPrice < config.fixedFeeThreshold ? config.fixedFee : 0
-  }
-
-  // Low-price threshold: 50% fee rule
-  let commissionUsed = commission
-  if (config.lowPriceThreshold > 0 && customPrice < config.lowPriceThreshold) {
-    commissionUsed = config.lowPriceFeeRate
-    if (!config.keepFixedFeeOnLowPrice) fixedFee = 0
-  }
-
-  const netProfit = customPrice * (1 - commissionUsed - taxRate) - effectiveCost - fixedFee
-  const marginPercent = customPrice > 0 ? (netProfit / customPrice) * 100 : 0
-
-  return {
-    netProfit: r2(netProfit),
-    marginPercent: parseFloat(marginPercent.toFixed(2)),
-    fixedFeeApplied: r2(fixedFee),
-    commissionUsed,
-  }
-}
-
-function brl(v: number): string {
-  return v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return results
 }
