@@ -38,12 +38,10 @@ export default function Home() {
   const [input, setInput] = useState<CalculatorInput>(DEFAULT_INPUT)
   const output = useMemo(() => calculatePricing(input), [input])
 
-  // Summary stats from top-1 candidates
-  const nonBlocked  = output.results.filter((r) => !r.isBlocked)
-  const bestPrice   = nonBlocked.find((r) => r.isBestPrice)
-  const bestProfit  = nonBlocked.find((r) => r.isBestProfit)
-  const bestPriceC  = bestPrice?.candidates.find((c) => c.rank === 1)
-  const bestProfitC = bestProfit?.candidates.find((c) => c.rank === 1)
+  // Summary stats
+  const nonBlocked = output.results.filter((r) => !r.isBlocked)
+  const bestPrice  = nonBlocked.find((r) => r.isBestPrice)
+  const bestProfit = nonBlocked.find((r) => r.isBestProfit)
 
   return (
     <div className="min-h-screen bg-[#080810]">
@@ -97,19 +95,19 @@ export default function Home() {
                 sublabel={`de ${output.results.length} selecionados`}
                 color="indigo"
               />
-              {bestPrice && bestPriceC && (
+              {bestPrice && (
                 <StatCard
                   label="Menor Preço"
-                  value={`R$${bestPriceC.price.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                  value={`R$${bestPrice.recommendedPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                   sublabel={bestPrice.label}
                   color="emerald"
                 />
               )}
-              {bestProfit && bestProfitC && (
+              {bestProfit && (
                 <StatCard
                   label="Maior Lucro"
-                  value={`R$${bestProfitC.netProfitPerUnit.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                  sublabel={`${bestProfit.label} · ${bestProfitC.marginPercent.toFixed(1)}%`}
+                  value={`R$${bestProfit.recommendedProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                  sublabel={`${bestProfit.label} · ${bestProfit.recommendedMarginPercent.toFixed(1)}%`}
                   color="violet"
                 />
               )}

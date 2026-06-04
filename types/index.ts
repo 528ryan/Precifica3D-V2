@@ -62,50 +62,35 @@ export interface FeeRule {
   fixedFee: number          // R$
 }
 
-// ── Price Candidate ─────────────────────────────────────────────────────────
-export interface PriceCandidate {
-  rank: number              // 1/2/3 for top 3; 0 for "user price" outside top 3
-  price: number
-  netProfitPerUnit: number
-  marginPercent: number
-  rule: FeeRule
-  rationale: string
-  isUserMargin?: boolean
-  isMathematicallyImpossible?: boolean
-}
-
-// ── Margin Suggestion ────────────────────────────────────────────────────────
-export interface MarginSuggestion {
-  conservative: number
-  balanced: number
-  aggressive: number
-  conservativeRationale: string
-  balancedRationale: string
-  aggressiveRationale: string
-}
-
-// ── Boundary Warning ─────────────────────────────────────────────────────────
-export interface BoundaryWarning {
-  message: string
-  profitDifference: number
-  currentPrice: number
-  suggestedPrice: number
-}
-
 // ── Marketplace Result ───────────────────────────────────────────────────────
 export interface MarketplaceResult {
   key: string
   label: string
-  activeRule: FeeRule
-  candidates: PriceCandidate[]
-  marginSuggestion: MarginSuggestion
-  boundaryWarnings: BoundaryWarning[]
-  isBestPrice: boolean
-  isBestProfit: boolean
+  appliedRule: FeeRule
+  recommendedPrice: number
+  recommendedProfit: number
+  recommendedMarginPercent: number
+  alternative?: {
+    price: number
+    profit: number
+    marginPercent: number
+    label: string
+  }
+  boundaryWarning?: {
+    message: string
+    direction: 'lower' | 'higher'
+    profitDiff: number
+  }
+  marginSuggestion: {
+    conservative: number
+    balanced: number
+    aggressive: number
+  }
+  warnings: string[]
   isBlocked: boolean
   blockedReason?: string
-  requiresCNPJ: boolean
-  notes?: string
+  isBestPrice: boolean
+  isBestProfit: boolean
 }
 
 // ── Calculator Output ────────────────────────────────────────────────────────

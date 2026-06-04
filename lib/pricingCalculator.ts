@@ -3,9 +3,6 @@ import type {
   CalculatorOutput,
   CostBreakdown,
   MarketplaceResult,
-  PriceCandidate,
-  MarginSuggestion,
-  BoundaryWarning,
   FeeRule,
 } from '@/types'
 import { MARKETPLACE_FEES, type MarketplaceFeeConfig } from '@/lib/marketplaceFees'
@@ -28,7 +25,7 @@ function ruleAt(price: number, config: MarketplaceFeeConfig): FeeRule {
   )
 }
 
-// ── Price resolver ───────────────────────────────────────────────────────────
+// ── Price resolver ────────────────────────────────────────────────────────────
 //
 // Formula:  price = (cost + fixedFee + mlOpCost) / (1 - commission - tax - margin)
 //
@@ -91,222 +88,94 @@ function netProfitForFixed(
   return price * (1 - rule.commissionPercent / 100 - taxDecimal) - cost - rule.fixedFee - mlOpCost
 }
 
-// ── Margin suggestions ───────────────────────────────────────────────────────
+// ── Margin suggestions (capped at cost × 4) ──────────────────────────────────
 
 function calcMarginSuggestion(
   cost: number,
   taxDecimal: number,
   config: MarketplaceFeeConfig,
   mlOpCost: number,
-): MarginSuggestion {
+): { conservative: number; balanced: number; aggressive: number } {
+  const PRICE_CAP = cost * 4
   let conservative = -1
   let balanced = -1
   let aggressive = -1
 
   for (let m = 1; m <= 80; m++) {
     const { price, impossible } = resolvePrice(cost, taxDecimal, m, config, mlOpCost)
-    if (impossible || price <= 0) continue
+    if (impossible || price <= 0 || price > PRICE_CAP) continue
 
-    // netProfit = price × m/100 (exact for resolvePrice-derived prices)
     const netProfit = price * m / 100
 
     if (conservative < 0 && netProfit > cost * 0.2) conservative = m
     if (balanced < 0 && m >= 35) balanced = m
-    if (price < cost * 3.5) aggressive = m // keep updating → find max valid m
+    aggressive = m // keep updating → find highest valid m
   }
 
   if (conservative < 0) conservative = 5
-  if (balanced < 0) balanced = 35
+  if (balanced < 0) balanced = Math.max(conservative, 35)
   if (aggressive < 0) aggressive = Math.max(conservative, 30)
 
-  const consRes = resolvePrice(cost, taxDecimal, conservative, config, mlOpCost)
-  const consProfit = consRes.impossible ? 0 : r2(consRes.price * conservative / 100)
-  const aggRes = resolvePrice(cost, taxDecimal, aggressive, config, mlOpCost)
-  const aggPrice = aggRes.impossible ? 0 : aggRes.price
-
-  return {
-    conservative,
-    balanced,
-    aggressive,
-    conservativeRationale: `Margem mínima sustentável (${conservative}%). Lucro R$${brl(consProfit)} cobre 20% do custo direto.`,
-    balancedRationale: `Referência equilibrada: ${balanced}% do preço de venda para produto físico no Brasil.`,
-    aggressiveRationale: `Margem máxima competitiva. Preço R$${brl(aggPrice)} ≤ 3,5× o custo direto.`,
-  }
+  return { conservative, balanced, aggressive }
 }
 
-// ── Candidate generation ─────────────────────────────────────────────────────
+// ── Boundary warning ──────────────────────────────────────────────────────────
+// Only fires when the recommended price is within R$5 of a tier boundary
+// AND moving to the better side would yield > R$1 more profit.
+// Returns at most 1 warning (highest profitDiff).
 
-function generateCandidates(
-  cost: number,
-  taxDecimal: number,
-  desiredMarginPercent: number,
-  config: MarketplaceFeeConfig,
-  mlOpCost: number,
-  marginSuggestion: MarginSuggestion,
-): PriceCandidate[] {
-  // Collect all candidate entries
-  const pool: PriceCandidate[] = []
-
-  function push(
-    price: number,
-    rule: FeeRule,
-    rationale: string,
-    isUserMargin = false,
-    impossible = false,
-  ) {
-    const netProfit = impossible ? 0 : r2(netProfitForFixed(price, rule, taxDecimal, cost, mlOpCost))
-    const marginPct = impossible || price <= 0 ? 0 : r2(netProfit / price * 100)
-    pool.push({
-      rank: 0,
-      price: impossible ? 0 : price,
-      netProfitPerUnit: netProfit,
-      marginPercent: marginPct,
-      rule,
-      rationale,
-      isUserMargin,
-      isMathematicallyImpossible: impossible,
-    })
-  }
-
-  // (a) User's desired margin
-  const userRes = resolvePrice(cost, taxDecimal, desiredMarginPercent, config, mlOpCost)
-  if (userRes.impossible) {
-    push(0, config.rules[0],
-      `Impossível: comissão + imposto + margem (${desiredMarginPercent}%) ≥ 100%.`,
-      true, true)
-  } else {
-    const { price: uP, rule: uR } = userRes
-    push(uP, uR,
-      `Margem de ${desiredMarginPercent}%. ${uR.label} — ${uR.commissionPercent}%` +
-      (uR.fixedFee > 0 ? ` + R$${brl(uR.fixedFee)} fixa` : '') + '.',
-      true)
-  }
-
-  // (b) Boundary analysis — evaluate each faixa transition point
-  for (let i = 0; i < config.rules.length - 1; i++) {
-    const B = config.rules[i].maxPrice
-    const rA = config.rules[i]         // rule at B (current faixa)
-    const rB = config.rules[i + 1]     // rule at B + 0.01 (next faixa)
-
-    const profitAtB    = netProfitForFixed(B,        rA, taxDecimal, cost, mlOpCost)
-    const profitAboveB = netProfitForFixed(B + 0.01, rB, taxDecimal, cost, mlOpCost)
-
-    if (profitAtB >= profitAboveB) {
-      const diff = r2(profitAtB - profitAboveB)
-      push(B, rA,
-        `R$${brl(B)} mantém ${rA.label} (${rA.commissionPercent}%` +
-        (rA.fixedFee > 0 ? `+R$${brl(rA.fixedFee)}` : '') +
-        `). Cruzar para R$${brl(B + 0.01)} = ${rB.label}: lucro cai R$${brl(diff)}.`)
-    } else {
-      const diff = r2(profitAboveB - profitAtB)
-      push(B + 0.01, rB,
-        `R$${brl(B + 0.01)} entra em ${rB.label} (${rB.commissionPercent}%` +
-        (rB.fixedFee > 0 ? `+R$${brl(rB.fixedFee)}` : '') +
-        `). Lucro sobe R$${brl(diff)} vs ficar na faixa anterior.`)
-    }
-  }
-
-  // (c) Margin suggestion candidates
-  const suggestionEntries: [string, number, string][] = [
-    ['conservative', marginSuggestion.conservative, marginSuggestion.conservativeRationale],
-    ['balanced',     marginSuggestion.balanced,     marginSuggestion.balancedRationale],
-    ['aggressive',   marginSuggestion.aggressive,   marginSuggestion.aggressiveRationale],
-  ]
-  for (const [, m, rationale] of suggestionEntries) {
-    if (m > 0) {
-      const res = resolvePrice(cost, taxDecimal, m, config, mlOpCost)
-      if (!res.impossible) push(res.price, res.rule, rationale)
-    }
-  }
-
-  // Separate user entry and non-user entries
-  const userEntry = pool.find((c) => c.isUserMargin)
-  const others = pool.filter((c) => !c.isUserMargin && !c.isMathematicallyImpossible)
-
-  // Deduplicate by price (keep highest netProfit for same rounded price)
-  const deduped = new Map<string, PriceCandidate>()
-  for (const c of others) {
-    const pk = c.price.toFixed(2)
-    const existing = deduped.get(pk)
-    if (!existing || c.netProfitPerUnit > existing.netProfitPerUnit) {
-      deduped.set(pk, c)
-    }
-  }
-
-  // Top 3 by netProfitPerUnit DESC
-  const top3 = Array.from(deduped.values())
-    .sort((a, b) => b.netProfitPerUnit - a.netProfitPerUnit)
-    .slice(0, 3)
-
-  // Assign ranks and mark user's price if it coincides
-  const result: PriceCandidate[] = top3.map((c, i) => ({
-    ...c,
-    rank: i + 1,
-    isUserMargin:
-      userEntry &&
-      !userEntry.isMathematicallyImpossible &&
-      c.price.toFixed(2) === userEntry.price.toFixed(2)
-        ? true
-        : false,
-  }))
-
-  // Append user's candidate if not already in top 3
-  if (userEntry) {
-    const userPriceInTop3 =
-      !userEntry.isMathematicallyImpossible &&
-      top3.some((c) => c.price.toFixed(2) === userEntry.price.toFixed(2))
-
-    if (!userPriceInTop3) {
-      result.push({ ...userEntry, rank: 0 })
-    }
-  }
-
-  return result
-}
-
-// ── Boundary warnings ─────────────────────────────────────────────────────────
-
-function generateBoundaryWarnings(
+function calcBoundaryWarning(
   cost: number,
   taxDecimal: number,
   config: MarketplaceFeeConfig,
   mlOpCost: number,
-  userPrice: number,
-): BoundaryWarning[] {
-  const warnings: BoundaryWarning[] = []
+  recommendedPrice: number,
+): MarketplaceResult['boundaryWarning'] {
+  const PROXIMITY = 5
+  const MIN_DIFF  = 1
+
+  let best: MarketplaceResult['boundaryWarning'] = undefined
+  let bestDiff = 0
 
   for (let i = 0; i < config.rules.length - 1; i++) {
     const B  = config.rules[i].maxPrice
     const rA = config.rules[i]
     const rB = config.rules[i + 1]
 
+    // Only check if recommended price is within R$5 of this boundary
+    const dist = Math.min(Math.abs(recommendedPrice - B), Math.abs(recommendedPrice - (B + 0.01)))
+    if (dist > PROXIMITY) continue
+
     const profitAtB    = netProfitForFixed(B,        rA, taxDecimal, cost, mlOpCost)
     const profitAboveB = netProfitForFixed(B + 0.01, rB, taxDecimal, cost, mlOpCost)
     const diff = r2(Math.abs(profitAtB - profitAboveB))
 
-    if (diff <= 1.0) continue
+    if (diff <= MIN_DIFF) continue
 
-    const betterIsBoundary   = profitAtB >= profitAboveB
-    const userIsAboveBoundary = userPrice > B
-
-    if (userIsAboveBoundary && betterIsBoundary) {
-      warnings.push({
-        message: `⚡ R$${brl(B)} (${rA.label}) = lucro +R$${brl(diff)} por peça`,
-        profitDifference: diff,
-        currentPrice: userPrice,
-        suggestedPrice: B,
-      })
-    } else if (!userIsAboveBoundary && !betterIsBoundary) {
-      warnings.push({
-        message: `⚡ R$${brl(B + 0.01)} (${rB.label}) = lucro +R$${brl(diff)} por peça`,
-        profitDifference: diff,
-        currentPrice: userPrice,
-        suggestedPrice: B + 0.01,
-      })
+    if (profitAtB > profitAboveB && recommendedPrice > B) {
+      // User is above boundary; better to stay at/below B
+      if (diff > bestDiff) {
+        bestDiff = diff
+        best = {
+          message: `⚡ Baixar para R$${brl(B)} rende +R$${brl(diff)} por peça (mantém faixa anterior)`,
+          direction: 'lower',
+          profitDiff: diff,
+        }
+      }
+    } else if (profitAboveB > profitAtB && recommendedPrice <= B) {
+      // User is at/below boundary; better to go above B
+      if (diff > bestDiff) {
+        bestDiff = diff
+        best = {
+          message: `⚡ Subir para R$${brl(B + 0.01)} rende +R$${brl(diff)} por peça (entra na próxima faixa)`,
+          direction: 'higher',
+          profitDiff: diff,
+        }
+      }
     }
   }
 
-  return warnings
+  return best
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
@@ -324,11 +193,11 @@ export function calculatePricing(input: CalculatorInput): CalculatorOutput {
   }
 
   // Cost breakdown
-  const filamentCost       = r2((production.filamentPricePerKg / 1000) * production.filamentWeightGrams)
-  const postProcessingCost = r2(production.postProcessingCost)
-  const otherDirectCosts   = r2(production.otherDirectCosts)
-  const baseCost           = r2(filamentCost + postProcessingCost + otherDirectCosts)
-  const failureRate        = Math.min(Math.max(production.failureRatePercent, 0), 99)
+  const filamentCost         = r2((production.filamentPricePerKg / 1000) * production.filamentWeightGrams)
+  const postProcessingCost   = r2(production.postProcessingCost)
+  const otherDirectCosts     = r2(production.otherDirectCosts)
+  const baseCost             = r2(filamentCost + postProcessingCost + otherDirectCosts)
+  const failureRate          = Math.min(Math.max(production.failureRatePercent, 0), 99)
   const effectiveCostPerUnit = r2(baseCost / (1 - failureRate / 100))
 
   const costBreakdown: CostBreakdown = {
@@ -361,19 +230,16 @@ export function calculatePricing(input: CalculatorInput): CalculatorOutput {
       results.push({
         key,
         label: feeConfig.label,
-        activeRule: feeConfig.rules[0],
-        candidates: [],
-        marginSuggestion: {
-          conservative: 0, balanced: 0, aggressive: 0,
-          conservativeRationale: '', balancedRationale: '', aggressiveRationale: '',
-        },
-        boundaryWarnings: [],
-        isBestPrice: false,
-        isBestProfit: false,
+        appliedRule: feeConfig.rules[0],
+        recommendedPrice: 0,
+        recommendedProfit: 0,
+        recommendedMarginPercent: 0,
+        marginSuggestion: { conservative: 0, balanced: 0, aggressive: 0 },
+        warnings: [],
         isBlocked: true,
         blockedReason: 'Requer CNPJ. Regime fiscal atual (CPF) não é permitido neste canal.',
-        requiresCNPJ: true,
-        notes: feeConfig.notes,
+        isBestPrice: false,
+        isBestProfit: false,
       })
       continue
     }
@@ -396,48 +262,80 @@ export function calculatePricing(input: CalculatorInput): CalculatorOutput {
       mlOpCost = overrides.mlOperationalCostPerUnit
     }
 
-    const marginSuggestion = calcMarginSuggestion(effectiveCostPerUnit, taxDecimal, configToUse, mlOpCost)
-    const candidates       = generateCandidates(effectiveCostPerUnit, taxDecimal, desiredMarginPercent, configToUse, mlOpCost, marginSuggestion)
+    const cost = effectiveCostPerUnit
+    const marginSuggestion = calcMarginSuggestion(cost, taxDecimal, configToUse, mlOpCost)
 
-    // Active rule: from user's candidate (or rank 1 as fallback)
-    const userC    = candidates.find((c) => c.isUserMargin && !c.isMathematicallyImpossible)
-                  ?? candidates.find((c) => c.rank === 1)
-    const activeRule = userC?.rule ?? configToUse.rules[0]
-    const userPrice  = userC?.price ?? 0
+    // Recommended price = exact desired margin
+    const recommended = resolvePrice(cost, taxDecimal, desiredMarginPercent, configToUse, mlOpCost)
 
-    const boundaryWarnings = generateBoundaryWarnings(effectiveCostPerUnit, taxDecimal, configToUse, mlOpCost, userPrice)
+    if (recommended.impossible) {
+      results.push({
+        key,
+        label: feeConfig.label,
+        appliedRule: configToUse.rules[0],
+        recommendedPrice: 0,
+        recommendedProfit: 0,
+        recommendedMarginPercent: 0,
+        marginSuggestion,
+        warnings: [`Impossível: comissão + imposto + margem (${desiredMarginPercent}%) ≥ 100%.`],
+        isBlocked: false,
+        isBestPrice: false,
+        isBestProfit: false,
+      })
+      continue
+    }
+
+    const recommendedPrice  = recommended.price
+    const recommendedProfit = r2(recommendedPrice * desiredMarginPercent / 100)
+    const appliedRule       = recommended.rule
+
+    // Alternative: conservative margin, only shown when desiredMargin > conservative + 2%
+    let alternative: MarketplaceResult['alternative'] = undefined
+    if (desiredMarginPercent > marginSuggestion.conservative + 2) {
+      const altRes = resolvePrice(cost, taxDecimal, marginSuggestion.conservative, configToUse, mlOpCost)
+      if (!altRes.impossible && altRes.price > 0) {
+        alternative = {
+          price: altRes.price,
+          profit: r2(altRes.price * marginSuggestion.conservative / 100),
+          marginPercent: marginSuggestion.conservative,
+          label: 'Mínimo sustentável',
+        }
+      }
+    }
+
+    // Boundary warning (max 1, only within R$5 proximity AND diff > R$1)
+    const boundaryWarning = calcBoundaryWarning(cost, taxDecimal, configToUse, mlOpCost, recommendedPrice)
+
+    const warnings: string[] = []
+    if (feeConfig.notes) warnings.push(feeConfig.notes)
 
     results.push({
       key,
       label: feeConfig.label,
-      activeRule,
-      candidates,
+      appliedRule,
+      recommendedPrice,
+      recommendedProfit,
+      recommendedMarginPercent: desiredMarginPercent,
+      alternative,
+      boundaryWarning,
       marginSuggestion,
-      boundaryWarnings,
+      warnings,
+      isBlocked: false,
       isBestPrice: false,
       isBestProfit: false,
-      isBlocked: false,
-      requiresCNPJ: feeConfig.requiresCNPJ,
-      notes: feeConfig.notes,
     })
   }
 
-  // Mark best price / best profit
+  // Mark best price / best profit among non-blocked results
   const nonBlocked = results.filter((r) => !r.isBlocked)
   if (nonBlocked.length > 0) {
-    const top1Price  = (r: MarketplaceResult) => r.candidates.find((c) => c.rank === 1)?.price          ?? Infinity
-    const top1Profit = (r: MarketplaceResult) => r.candidates.find((c) => c.rank === 1)?.netProfitPerUnit ?? -Infinity
-
-    const minPrice  = Math.min(...nonBlocked.map(top1Price))
-    const maxProfit = Math.max(...nonBlocked.map(top1Profit))
+    const minPrice  = Math.min(...nonBlocked.map((r) => r.recommendedPrice === 0 ? Infinity : r.recommendedPrice))
+    const maxProfit = Math.max(...nonBlocked.map((r) => r.recommendedProfit))
 
     for (const r of results) {
-      if (r.isBlocked) continue
-      const c = r.candidates.find((c) => c.rank === 1)
-      if (c && !c.isMathematicallyImpossible) {
-        r.isBestPrice  = c.price          === minPrice
-        r.isBestProfit = c.netProfitPerUnit === maxProfit
-      }
+      if (r.isBlocked || r.recommendedPrice === 0) continue
+      r.isBestPrice  = r.recommendedPrice  === minPrice
+      r.isBestProfit = r.recommendedProfit === maxProfit
     }
   }
 
