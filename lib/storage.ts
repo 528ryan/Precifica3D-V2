@@ -9,14 +9,9 @@ function isClient(): boolean {
   return typeof window !== 'undefined'
 }
 
-// Legacy preset shape — mlOperationalCostPerUnit existed before março 2026
-interface LegacyOverrides {
-  mlClassicoCommission: number
-  mlPremiumCommission: number
-  mlOperationalCostPerUnit?: number
-}
-interface LegacyPresetInput extends Omit<CalculatorInput, 'overrides' | 'mlShipping'> {
-  overrides: LegacyOverrides
+// Legacy preset shape — overrides field existed before a remoção das taxas manuais
+interface LegacyPresetInput extends Omit<CalculatorInput, 'mlShipping'> {
+  overrides?: Record<string, unknown>  // campo antigo — descartado na migração
   mlShipping?: { packagingWeightG: number }
 }
 interface LegacyPreset extends Omit<SavedPreset, 'input'> {
@@ -28,10 +23,6 @@ function migratePresetInput(raw: LegacyPresetInput): CalculatorInput {
     production: raw.production,
     seller: raw.seller,
     marketplaces: raw.marketplaces,
-    overrides: {
-      mlClassicoCommission: raw.overrides.mlClassicoCommission,
-      mlPremiumCommission:  raw.overrides.mlPremiumCommission,
-    },
     mlShipping: raw.mlShipping ?? { packagingWeightG: 50 },
     desiredMarginPercent: raw.desiredMarginPercent,
   }

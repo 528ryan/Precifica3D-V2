@@ -181,7 +181,7 @@ function calcBoundaryWarning(
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export function calculatePricing(input: CalculatorInput): CalculatorOutput {
-  const { production, seller, marketplaces, overrides, mlShipping, desiredMarginPercent } = input
+  const { production, seller, marketplaces, mlShipping, desiredMarginPercent } = input
   const errors: string[] = []
 
   // Validation
@@ -244,31 +244,24 @@ export function calculatePricing(input: CalculatorInput): CalculatorOutput {
       continue
     }
 
-    // Apply ML commission overrides
-    let configToUse = feeConfig
+    // ML operational cost (derived from weight — no user input)
     let mlOpCost = 0
-
     if (key === 'ml_classico' || key === 'ml_premium') {
-      const commission = key === 'ml_classico' ? overrides.mlClassicoCommission : overrides.mlPremiumCommission
-      configToUse = {
-        ...feeConfig,
-        rules: feeConfig.rules.map((r) => ({ ...r, commissionPercent: commission })),
-      }
       const totalWeightG = production.filamentWeightGrams + mlShipping.packagingWeightG
       mlOpCost = getMLOperationalCost(totalWeightG).operationalCost
     }
 
     const cost = effectiveCostPerUnit
-    const marginSuggestion = calcMarginSuggestion(cost, taxDecimal, configToUse, mlOpCost)
+    const marginSuggestion = calcMarginSuggestion(cost, taxDecimal, feeConfig, mlOpCost)
 
     // Recommended price = exact desired margin
-    const recommended = resolvePrice(cost, taxDecimal, desiredMarginPercent, configToUse, mlOpCost)
+    const recommended = resolvePrice(cost, taxDecimal, desiredMarginPercent, feeConfig, mlOpCost)
 
     if (recommended.impossible) {
       results.push({
         key,
         label: feeConfig.label,
-        appliedRule: configToUse.rules[0],
+        appliedRule: feeConfig.rules[0],
         recommendedPrice: 0,
         recommendedProfit: 0,
         recommendedMarginPercent: 0,
@@ -288,7 +281,7 @@ export function calculatePricing(input: CalculatorInput): CalculatorOutput {
     // Alternative: conservative margin, only shown when desiredMargin > conservative + 2%
     let alternative: MarketplaceResult['alternative'] = undefined
     if (desiredMarginPercent > marginSuggestion.conservative + 2) {
-      const altRes = resolvePrice(cost, taxDecimal, marginSuggestion.conservative, configToUse, mlOpCost)
+      const altRes = resolvePrice(cost, taxDecimal, marginSuggestion.conservative, feeConfig, mlOpCost)
       if (!altRes.impossible && altRes.price > 0) {
         alternative = {
           price: altRes.price,
@@ -300,7 +293,7 @@ export function calculatePricing(input: CalculatorInput): CalculatorOutput {
     }
 
     // Boundary warning (max 1, only within R$5 proximity AND diff > R$1)
-    const boundaryWarning = calcBoundaryWarning(cost, taxDecimal, configToUse, mlOpCost, recommendedPrice)
+    const boundaryWarning = calcBoundaryWarning(cost, taxDecimal, feeConfig, mlOpCost, recommendedPrice)
 
     const warnings: string[] = []
     if (feeConfig.notes) warnings.push(feeConfig.notes)
@@ -356,7 +349,7 @@ export function calculateKitPricing(
   kitTotalCost: number,
   input: CalculatorInput,
 ): KitPriceResult[] {
-  const { production, seller, marketplaces, overrides, mlShipping, desiredMarginPercent } = input
+  const { production, seller, marketplaces, mlShipping, desiredMarginPercent } = input
   const taxRule    = getTaxRule(seller.taxRegime)
   const taxDecimal = taxRule.percentOnRevenue
   const hasCNPJ    = seller.taxRegime !== 'cpf'
@@ -375,19 +368,15 @@ export function calculateKitPricing(
       continue
     }
 
-    let configToUse = feeConfig
     let mlOpCost = 0
-
     if (key === 'ml_classico' || key === 'ml_premium') {
-      const commission = key === 'ml_classico' ? overrides.mlClassicoCommission : overrides.mlPremiumCommission
-      configToUse = { ...feeConfig, rules: feeConfig.rules.map((r) => ({ ...r, commissionPercent: commission })) }
       const totalWeightG = production.filamentWeightGrams + mlShipping.packagingWeightG
       mlOpCost = getMLOperationalCost(totalWeightG).operationalCost
     }
 
-    const resolved = resolvePrice(kitTotalCost, taxDecimal, desiredMarginPercent, configToUse, mlOpCost)
+    const resolved = resolvePrice(kitTotalCost, taxDecimal, desiredMarginPercent, feeConfig, mlOpCost)
     if (resolved.impossible) {
-      results.push({ key, label: feeConfig.label, recommendedPrice: 0, netProfitPerKit: 0, marginPercent: 0, rule: configToUse.rules[0], isBlocked: false, errorMsg: 'Impossível com a margem atual.' })
+      results.push({ key, label: feeConfig.label, recommendedPrice: 0, netProfitPerKit: 0, marginPercent: 0, rule: feeConfig.rules[0], isBlocked: false, errorMsg: 'Impossível com a margem atual.' })
       continue
     }
 

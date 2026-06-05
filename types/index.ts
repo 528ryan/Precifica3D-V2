@@ -28,11 +28,6 @@ export interface MarketplaceToggles {
   venda_direta: boolean
 }
 
-export interface MarketplaceOverrides {
-  mlClassicoCommission: number  // inteiro: 10–14
-  mlPremiumCommission: number   // inteiro: 15–19
-}
-
 export interface MLShipping {
   packagingWeightG: number  // peso da embalagem em gramas (default: 50)
 }
@@ -42,7 +37,6 @@ export interface CalculatorInput {
   production: ProductionInput
   seller: SellerInput
   marketplaces: MarketplaceToggles
-  overrides: MarketplaceOverrides
   mlShipping: MLShipping
   desiredMarginPercent: number
 }

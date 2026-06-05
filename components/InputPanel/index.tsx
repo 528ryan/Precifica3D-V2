@@ -1,6 +1,6 @@
 'use client'
 
-import type { CalculatorInput, ProductionInput, SellerInput, MarketplaceToggles, MarketplaceOverrides, MLShipping } from '@/types'
+import type { CalculatorInput, ProductionInput, SellerInput, MarketplaceToggles, MLShipping } from '@/types'
 import ProductionSection from './ProductionSection'
 import SellerSection from './SellerSection'
 import MarketplaceSection from './MarketplaceSection'
@@ -23,9 +23,6 @@ export default function InputPanel({ value, onChange }: Props) {
   const toggleMarketplace = (key: keyof MarketplaceToggles, val: boolean) =>
     update({ marketplaces: { ...value.marketplaces, [key]: val } })
 
-  const updateOverrides = (partial: Partial<MarketplaceOverrides>) =>
-    update({ overrides: { ...value.overrides, ...partial } })
-
   const updateMlShipping = (v: MLShipping) =>
     update({ mlShipping: v })
 
@@ -35,12 +32,10 @@ export default function InputPanel({ value, onChange }: Props) {
       <SellerSection value={value.seller} onChange={updateSeller} />
       <MarketplaceSection
         marketplaces={value.marketplaces}
-        overrides={value.overrides}
         taxRegime={value.seller.taxRegime}
         filamentWeightGrams={value.production.filamentWeightGrams}
         mlShipping={value.mlShipping}
         onToggle={toggleMarketplace}
-        onOverride={updateOverrides}
         onMlShipping={updateMlShipping}
       />
     </div>

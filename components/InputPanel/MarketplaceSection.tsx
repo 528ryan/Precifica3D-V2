@@ -1,20 +1,17 @@
 'use client'
 
-import type { MarketplaceToggles, MarketplaceOverrides, MLShipping, TaxRegime } from '@/types'
-import { MARKETPLACE_FEES, ML_CLASSICO_RANGE, ML_PREMIUM_RANGE, getMLOperationalCost } from '@/lib/marketplaceFees'
+import type { MarketplaceToggles, MLShipping, TaxRegime } from '@/types'
+import { MARKETPLACE_FEES, getMLOperationalCost } from '@/lib/marketplaceFees'
 import CollapsibleSection from '@/components/ui/CollapsibleSection'
 import Toggle from '@/components/ui/Toggle'
-import Slider from '@/components/ui/Slider'
 import Badge from '@/components/ui/Badge'
 
 interface Props {
   marketplaces: MarketplaceToggles
-  overrides: MarketplaceOverrides
   taxRegime: TaxRegime
   filamentWeightGrams: number
   mlShipping: MLShipping
   onToggle: (key: keyof MarketplaceToggles, value: boolean) => void
-  onOverride: (partial: Partial<MarketplaceOverrides>) => void
   onMlShipping: (v: MLShipping) => void
 }
 
@@ -28,12 +25,10 @@ const ICONS: Record<string, string> = {
 
 export default function MarketplaceSection({
   marketplaces,
-  overrides,
   taxRegime,
   filamentWeightGrams,
   mlShipping,
   onToggle,
-  onOverride,
   onMlShipping,
 }: Props) {
   const activeCount = Object.values(marketplaces).filter(Boolean).length
@@ -96,27 +91,9 @@ export default function MarketplaceSection({
                 />
               </div>
 
-              {/* ML channels — commission slider + weight block */}
+              {/* ML channels — weight block */}
               {isEnabled && isMlChannel && (
                 <div className="px-3 pb-3 space-y-3 border-t border-[#1e1e32]/50">
-                  {/* Commission slider */}
-                  <div className="pt-2">
-                    <Slider
-                      label="Comissão"
-                      value={config.key === 'ml_classico' ? overrides.mlClassicoCommission : overrides.mlPremiumCommission}
-                      onChange={(v) =>
-                        onOverride(
-                          config.key === 'ml_classico'
-                            ? { mlClassicoCommission: v }
-                            : { mlPremiumCommission: v }
-                        )
-                      }
-                      min={config.key === 'ml_classico' ? ML_CLASSICO_RANGE.min : ML_PREMIUM_RANGE.min}
-                      max={config.key === 'ml_classico' ? ML_CLASSICO_RANGE.max : ML_PREMIUM_RANGE.max}
-                      displayValue={`${config.key === 'ml_classico' ? overrides.mlClassicoCommission : overrides.mlPremiumCommission}%`}
-                    />
-                  </div>
-
                   {/* Weight block */}
                   <div className="space-y-1.5 pt-1">
                     <p className="text-xs font-medium text-[#6b6b8a]">Peso do envio</p>

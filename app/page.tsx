@@ -6,7 +6,6 @@ import ResultsPanel from '@/components/ResultsPanel'
 import PresetManager from '@/components/InputPanel/PresetManager'
 import { calculatePricing } from '@/lib/pricingCalculator'
 import type { CalculatorInput } from '@/types'
-import { ML_CLASSICO_RANGE, ML_PREMIUM_RANGE } from '@/lib/marketplaceFees'
 
 const DEFAULT_INPUT: CalculatorInput = {
   production: {
@@ -25,10 +24,6 @@ const DEFAULT_INPUT: CalculatorInput = {
     shopee:       true,
     tiktok:       false,
     venda_direta: false,
-  },
-  overrides: {
-    mlClassicoCommission: ML_CLASSICO_RANGE.default,
-    mlPremiumCommission:  ML_PREMIUM_RANGE.default,
   },
   mlShipping: {
     packagingWeightG: 50,

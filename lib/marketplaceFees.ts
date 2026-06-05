@@ -44,21 +44,19 @@ export const MARKETPLACE_FEES: MarketplaceFeeConfig[] = [
     key: 'ml_classico',
     label: 'Mercado Livre Clássico',
     requiresCNPJ: false,
-    notes: 'Comissão ajustável 10–14%. Custo operacional calculado automaticamente pelo peso do envio.',
+    notes: 'Comissão 12%. Custo operacional calculado automaticamente pelo peso do envio.',
     rules: [
       { label: 'Padrão', minPrice: 0, maxPrice: Infinity, commissionPercent: 12, fixedFee: 0 },
     ],
-    // commissionPercent é sobrescrito pelo slider do usuário (10–14)
   },
   {
     key: 'ml_premium',
     label: 'Mercado Livre Premium',
     requiresCNPJ: false,
-    notes: 'Comissão ajustável 15–19%. Parcelamento 12× sem juros para o comprador.',
+    notes: 'Comissão 16%. Parcelamento 12× sem juros para o comprador.',
     rules: [
       { label: 'Padrão', minPrice: 0, maxPrice: Infinity, commissionPercent: 16, fixedFee: 0 },
     ],
-    // commissionPercent é sobrescrito pelo slider do usuário (15–19)
   },
   {
     key: 'shopee',
@@ -94,6 +92,3 @@ export const MARKETPLACE_FEES: MarketplaceFeeConfig[] = [
   },
 ]
 
-// ── ML commission ranges ─────────────────────────────────────────────────────
-export const ML_CLASSICO_RANGE = { min: 10, max: 14, default: 12 }
-export const ML_PREMIUM_RANGE  = { min: 15, max: 19, default: 16 }
