@@ -118,21 +118,27 @@ export default function MarketplaceSection({
                   </div>
 
                   {/* Weight block */}
-                  <div className="space-y-2 pt-1">
+                  <div className="space-y-1.5 pt-1">
                     <p className="text-xs font-medium text-[#6b6b8a]">Peso do envio</p>
-                    <div className="flex items-end gap-2">
-                      <div className="flex-1">
-                        <p className="text-xs text-[#6b6b8a] mb-1">Produto (g)</p>
+
+                    {/* Produto — read-only */}
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-[#6b6b8a] w-24 shrink-0">Produto</p>
+                      <div className="flex items-center gap-1.5 flex-1 justify-end">
                         <input
                           type="number"
                           value={filamentWeightGrams}
                           readOnly
-                          className="input-base w-full opacity-50 cursor-not-allowed"
+                          className="input-base w-20 opacity-50 cursor-not-allowed text-right"
                         />
+                        <span className="text-xs text-[#6b6b8a] w-3">g</span>
                       </div>
-                      <span className="text-xs text-[#6b6b8a] pb-2">+</span>
-                      <div className="flex-1">
-                        <p className="text-xs text-[#6b6b8a] mb-1">Embalagem (g)</p>
+                    </div>
+
+                    {/* Embalagem — editable */}
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-[#6b6b8a] w-24 shrink-0">Embalagem</p>
+                      <div className="flex items-center gap-1.5 flex-1 justify-end">
                         <input
                           type="number"
                           value={mlShipping.packagingWeightG}
@@ -141,27 +147,30 @@ export default function MarketplaceSection({
                           onChange={(e) =>
                             onMlShipping({ packagingWeightG: parseFloat(e.target.value) || 0 })
                           }
-                          className="input-base w-full"
+                          className="input-base w-20 text-right"
                         />
-                      </div>
-                      <span className="text-xs text-[#6b6b8a] pb-2">=</span>
-                      <div className="flex-1">
-                        <p className="text-xs text-[#6b6b8a] mb-1">Total</p>
-                        <p className="font-mono text-sm text-[#e8e8f0] h-[34px] flex items-center">
-                          {totalWeightG.toLocaleString('pt-BR')}g
-                        </p>
+                        <span className="text-xs text-[#6b6b8a] w-3">g</span>
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between rounded-md bg-white/[0.02] border border-[#1e1e32] px-2.5 py-1.5">
+                    {/* Divider + total */}
+                    <div className="border-t border-[#1e1e32]/70 pt-1.5 flex items-center justify-between">
+                      <p className="text-xs text-[#6b6b8a] w-24 shrink-0">Total</p>
+                      <p className="font-mono text-sm text-[#e8e8f0]">
+                        {totalWeightG.toLocaleString('pt-BR')}g
+                      </p>
+                    </div>
+
+                    {/* Custo calculado */}
+                    <div className="rounded-md bg-white/[0.02] border border-[#1e1e32] px-2.5 py-1.5 mt-1">
                       <p className="text-xs text-[#6b6b8a]">
                         Custo operacional ML:{' '}
                         <span className="font-mono text-[#e8e8f0]">
                           R$ {weightRule.operationalCost.toFixed(2).replace('.', ',')}
                         </span>
-                        <span className="ml-1">({weightRule.label})</span>
+                        {' · '}Faixa: {weightRule.label}
                       </p>
-                      <p className="text-xs text-[#6b6b8a] shrink-0">automático</p>
+                      <p className="text-xs text-[#6b6b8a] mt-0.5">(calculado automaticamente)</p>
                     </div>
 
                     {isOverWeight && (
