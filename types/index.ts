@@ -29,9 +29,12 @@ export interface MarketplaceToggles {
 }
 
 export interface MarketplaceOverrides {
-  mlClassicoCommission: number       // inteiro: 10–14
-  mlPremiumCommission: number        // inteiro: 15–19
-  mlOperationalCostPerUnit: number   // R$ — custo operacional (peso/dimensão) por unidade
+  mlClassicoCommission: number  // inteiro: 10–14
+  mlPremiumCommission: number   // inteiro: 15–19
+}
+
+export interface MLShipping {
+  packagingWeightG: number  // peso da embalagem em gramas (default: 50)
 }
 
 // ── Calculator Input ────────────────────────────────────────────────────────
@@ -40,6 +43,7 @@ export interface CalculatorInput {
   seller: SellerInput
   marketplaces: MarketplaceToggles
   overrides: MarketplaceOverrides
+  mlShipping: MLShipping
   desiredMarginPercent: number
 }
 

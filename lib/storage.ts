@@ -1,4 +1,4 @@
-import type { SavedPreset, SavedKit } from '@/types'
+import type { CalculatorInput, SavedPreset, SavedKit } from '@/types'
 
 // ── Presets ────────────────────────────────────────────────────────────────
 
@@ -9,12 +9,41 @@ function isClient(): boolean {
   return typeof window !== 'undefined'
 }
 
+// Legacy preset shape — mlOperationalCostPerUnit existed before março 2026
+interface LegacyOverrides {
+  mlClassicoCommission: number
+  mlPremiumCommission: number
+  mlOperationalCostPerUnit?: number
+}
+interface LegacyPresetInput extends Omit<CalculatorInput, 'overrides' | 'mlShipping'> {
+  overrides: LegacyOverrides
+  mlShipping?: { packagingWeightG: number }
+}
+interface LegacyPreset extends Omit<SavedPreset, 'input'> {
+  input: LegacyPresetInput
+}
+
+function migratePresetInput(raw: LegacyPresetInput): CalculatorInput {
+  return {
+    production: raw.production,
+    seller: raw.seller,
+    marketplaces: raw.marketplaces,
+    overrides: {
+      mlClassicoCommission: raw.overrides.mlClassicoCommission,
+      mlPremiumCommission:  raw.overrides.mlPremiumCommission,
+    },
+    mlShipping: raw.mlShipping ?? { packagingWeightG: 50 },
+    desiredMarginPercent: raw.desiredMarginPercent,
+  }
+}
+
 export function loadPresets(): SavedPreset[] {
   if (!isClient()) return []
   try {
     const raw = localStorage.getItem(PRESETS_KEY)
     if (!raw) return []
-    return JSON.parse(raw) as SavedPreset[]
+    const parsed = JSON.parse(raw) as LegacyPreset[]
+    return parsed.map((p) => ({ ...p, input: migratePresetInput(p.input) }))
   } catch {
     return []
   }

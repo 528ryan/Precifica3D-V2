@@ -1,20 +1,21 @@
 'use client'
 
-import type { MarketplaceToggles, MarketplaceOverrides, TaxRegime } from '@/types'
-import { MARKETPLACE_FEES } from '@/lib/marketplaceFees'
-import { ML_CLASSICO_RANGE, ML_PREMIUM_RANGE } from '@/lib/marketplaceFees'
+import type { MarketplaceToggles, MarketplaceOverrides, MLShipping, TaxRegime } from '@/types'
+import { MARKETPLACE_FEES, ML_CLASSICO_RANGE, ML_PREMIUM_RANGE, getMLOperationalCost } from '@/lib/marketplaceFees'
 import CollapsibleSection from '@/components/ui/CollapsibleSection'
 import Toggle from '@/components/ui/Toggle'
 import Slider from '@/components/ui/Slider'
 import Badge from '@/components/ui/Badge'
-import Field from './Field'
 
 interface Props {
   marketplaces: MarketplaceToggles
   overrides: MarketplaceOverrides
   taxRegime: TaxRegime
+  filamentWeightGrams: number
+  mlShipping: MLShipping
   onToggle: (key: keyof MarketplaceToggles, value: boolean) => void
   onOverride: (partial: Partial<MarketplaceOverrides>) => void
+  onMlShipping: (v: MLShipping) => void
 }
 
 const ICONS: Record<string, string> = {
@@ -29,11 +30,18 @@ export default function MarketplaceSection({
   marketplaces,
   overrides,
   taxRegime,
+  filamentWeightGrams,
+  mlShipping,
   onToggle,
   onOverride,
+  onMlShipping,
 }: Props) {
   const activeCount = Object.values(marketplaces).filter(Boolean).length
   const hasCNPJ = taxRegime !== 'cpf'
+
+  const totalWeightG = filamentWeightGrams + mlShipping.packagingWeightG
+  const weightRule   = getMLOperationalCost(totalWeightG)
+  const isOverWeight = totalWeightG > 30000
 
   return (
     <CollapsibleSection
@@ -51,6 +59,7 @@ export default function MarketplaceSection({
           const isEnabled = marketplaces[key]
           const isBlocked = config.requiresCNPJ && !hasCNPJ
           const icon = ICONS[config.key] ?? '🏬'
+          const isMlChannel = config.key === 'ml_classico' || config.key === 'ml_premium'
 
           return (
             <div
@@ -87,52 +96,84 @@ export default function MarketplaceSection({
                 />
               </div>
 
-              {/* ML Clássico — commission slider + operational cost */}
-              {isEnabled && config.key === 'ml_classico' && (
+              {/* ML channels — commission slider + weight block */}
+              {isEnabled && isMlChannel && (
                 <div className="px-3 pb-3 space-y-3 border-t border-[#1e1e32]/50">
+                  {/* Commission slider */}
                   <div className="pt-2">
                     <Slider
                       label="Comissão"
-                      value={overrides.mlClassicoCommission}
-                      onChange={(v) => onOverride({ mlClassicoCommission: v })}
-                      min={ML_CLASSICO_RANGE.min}
-                      max={ML_CLASSICO_RANGE.max}
-                      displayValue={`${overrides.mlClassicoCommission}%`}
+                      value={config.key === 'ml_classico' ? overrides.mlClassicoCommission : overrides.mlPremiumCommission}
+                      onChange={(v) =>
+                        onOverride(
+                          config.key === 'ml_classico'
+                            ? { mlClassicoCommission: v }
+                            : { mlPremiumCommission: v }
+                        )
+                      }
+                      min={config.key === 'ml_classico' ? ML_CLASSICO_RANGE.min : ML_PREMIUM_RANGE.min}
+                      max={config.key === 'ml_classico' ? ML_CLASSICO_RANGE.max : ML_PREMIUM_RANGE.max}
+                      displayValue={`${config.key === 'ml_classico' ? overrides.mlClassicoCommission : overrides.mlPremiumCommission}%`}
                     />
                   </div>
-                  <Field label="Custo operacional" hint="R$/un. — consulte o Seller Center (peso + dimensão)">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs text-[#6b6b8a]">R$</span>
-                      <input
-                        type="number"
-                        value={overrides.mlOperationalCostPerUnit}
-                        min={0}
-                        step={0.5}
-                        onChange={(e) =>
-                          onOverride({ mlOperationalCostPerUnit: parseFloat(e.target.value) || 0 })
-                        }
-                        className="input-base"
-                      />
+
+                  {/* Weight block */}
+                  <div className="space-y-2 pt-1">
+                    <p className="text-xs font-medium text-[#6b6b8a]">Peso do envio</p>
+                    <div className="flex items-end gap-2">
+                      <div className="flex-1">
+                        <p className="text-xs text-[#6b6b8a] mb-1">Produto (g)</p>
+                        <input
+                          type="number"
+                          value={filamentWeightGrams}
+                          readOnly
+                          className="input-base w-full opacity-50 cursor-not-allowed"
+                        />
+                      </div>
+                      <span className="text-xs text-[#6b6b8a] pb-2">+</span>
+                      <div className="flex-1">
+                        <p className="text-xs text-[#6b6b8a] mb-1">Embalagem (g)</p>
+                        <input
+                          type="number"
+                          value={mlShipping.packagingWeightG}
+                          min={0}
+                          step={10}
+                          onChange={(e) =>
+                            onMlShipping({ packagingWeightG: parseFloat(e.target.value) || 0 })
+                          }
+                          className="input-base w-full"
+                        />
+                      </div>
+                      <span className="text-xs text-[#6b6b8a] pb-2">=</span>
+                      <div className="flex-1">
+                        <p className="text-xs text-[#6b6b8a] mb-1">Total</p>
+                        <p className="font-mono text-sm text-[#e8e8f0] h-[34px] flex items-center">
+                          {totalWeightG.toLocaleString('pt-BR')}g
+                        </p>
+                      </div>
                     </div>
-                  </Field>
+
+                    <div className="flex items-center justify-between rounded-md bg-white/[0.02] border border-[#1e1e32] px-2.5 py-1.5">
+                      <p className="text-xs text-[#6b6b8a]">
+                        Custo operacional ML:{' '}
+                        <span className="font-mono text-[#e8e8f0]">
+                          R$ {weightRule.operationalCost.toFixed(2).replace('.', ',')}
+                        </span>
+                        <span className="ml-1">({weightRule.label})</span>
+                      </p>
+                      <p className="text-xs text-[#6b6b8a] shrink-0">automático</p>
+                    </div>
+
+                    {isOverWeight && (
+                      <p className="text-xs text-[#f59e0b]">
+                        Peso acima de 30kg — consulte o ML para tarifas especiais
+                      </p>
+                    )}
+                  </div>
                 </div>
               )}
 
-              {/* ML Premium — commission slider */}
-              {isEnabled && config.key === 'ml_premium' && (
-                <div className="px-3 pb-3 border-t border-[#1e1e32]/50">
-                  <div className="pt-2">
-                    <Slider
-                      label="Comissão"
-                      value={overrides.mlPremiumCommission}
-                      onChange={(v) => onOverride({ mlPremiumCommission: v })}
-                      min={ML_PREMIUM_RANGE.min}
-                      max={ML_PREMIUM_RANGE.max}
-                      displayValue={`${overrides.mlPremiumCommission}%`}
-                    />
-                  </div>
-                </div>
-              )}
+              {/* Non-ML channels — no extra controls */}
             </div>
           )
         })}

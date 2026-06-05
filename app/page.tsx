@@ -27,9 +27,11 @@ const DEFAULT_INPUT: CalculatorInput = {
     venda_direta: false,
   },
   overrides: {
-    mlClassicoCommission:    ML_CLASSICO_RANGE.default,
-    mlPremiumCommission:     ML_PREMIUM_RANGE.default,
-    mlOperationalCostPerUnit: 0,
+    mlClassicoCommission: ML_CLASSICO_RANGE.default,
+    mlPremiumCommission:  ML_PREMIUM_RANGE.default,
+  },
+  mlShipping: {
+    packagingWeightG: 50,
   },
   desiredMarginPercent: 30,
 }

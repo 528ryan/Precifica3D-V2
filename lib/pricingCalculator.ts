@@ -5,7 +5,7 @@ import type {
   MarketplaceResult,
   FeeRule,
 } from '@/types'
-import { MARKETPLACE_FEES, type MarketplaceFeeConfig } from '@/lib/marketplaceFees'
+import { MARKETPLACE_FEES, getMLOperationalCost, type MarketplaceFeeConfig } from '@/lib/marketplaceFees'
 import { getTaxRule } from '@/lib/taxRates'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -181,7 +181,7 @@ function calcBoundaryWarning(
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export function calculatePricing(input: CalculatorInput): CalculatorOutput {
-  const { production, seller, marketplaces, overrides, desiredMarginPercent } = input
+  const { production, seller, marketplaces, overrides, mlShipping, desiredMarginPercent } = input
   const errors: string[] = []
 
   // Validation
@@ -248,18 +248,14 @@ export function calculatePricing(input: CalculatorInput): CalculatorOutput {
     let configToUse = feeConfig
     let mlOpCost = 0
 
-    if (key === 'ml_classico') {
+    if (key === 'ml_classico' || key === 'ml_premium') {
+      const commission = key === 'ml_classico' ? overrides.mlClassicoCommission : overrides.mlPremiumCommission
       configToUse = {
         ...feeConfig,
-        rules: feeConfig.rules.map((r) => ({ ...r, commissionPercent: overrides.mlClassicoCommission })),
+        rules: feeConfig.rules.map((r) => ({ ...r, commissionPercent: commission })),
       }
-      mlOpCost = overrides.mlOperationalCostPerUnit
-    } else if (key === 'ml_premium') {
-      configToUse = {
-        ...feeConfig,
-        rules: feeConfig.rules.map((r) => ({ ...r, commissionPercent: overrides.mlPremiumCommission })),
-      }
-      mlOpCost = overrides.mlOperationalCostPerUnit
+      const totalWeightG = production.filamentWeightGrams + mlShipping.packagingWeightG
+      mlOpCost = getMLOperationalCost(totalWeightG).operationalCost
     }
 
     const cost = effectiveCostPerUnit
@@ -360,7 +356,7 @@ export function calculateKitPricing(
   kitTotalCost: number,
   input: CalculatorInput,
 ): KitPriceResult[] {
-  const { seller, marketplaces, overrides, desiredMarginPercent } = input
+  const { production, seller, marketplaces, overrides, mlShipping, desiredMarginPercent } = input
   const taxRule    = getTaxRule(seller.taxRegime)
   const taxDecimal = taxRule.percentOnRevenue
   const hasCNPJ    = seller.taxRegime !== 'cpf'
@@ -382,12 +378,11 @@ export function calculateKitPricing(
     let configToUse = feeConfig
     let mlOpCost = 0
 
-    if (key === 'ml_classico') {
-      configToUse = { ...feeConfig, rules: feeConfig.rules.map((r) => ({ ...r, commissionPercent: overrides.mlClassicoCommission })) }
-      mlOpCost = overrides.mlOperationalCostPerUnit
-    } else if (key === 'ml_premium') {
-      configToUse = { ...feeConfig, rules: feeConfig.rules.map((r) => ({ ...r, commissionPercent: overrides.mlPremiumCommission })) }
-      mlOpCost = overrides.mlOperationalCostPerUnit
+    if (key === 'ml_classico' || key === 'ml_premium') {
+      const commission = key === 'ml_classico' ? overrides.mlClassicoCommission : overrides.mlPremiumCommission
+      configToUse = { ...feeConfig, rules: feeConfig.rules.map((r) => ({ ...r, commissionPercent: commission })) }
+      const totalWeightG = production.filamentWeightGrams + mlShipping.packagingWeightG
+      mlOpCost = getMLOperationalCost(totalWeightG).operationalCost
     }
 
     const resolved = resolvePrice(kitTotalCost, taxDecimal, desiredMarginPercent, configToUse, mlOpCost)
