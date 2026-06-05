@@ -2,6 +2,7 @@ import type {
   CalculatorInput,
   CalculatorOutput,
   CostBreakdown,
+  FeeBreakdown,
   MarketplaceResult,
   FeeRule,
 } from '@/types'
@@ -235,6 +236,7 @@ export function calculatePricing(input: CalculatorInput): CalculatorOutput {
         recommendedProfit: 0,
         recommendedMarginPercent: 0,
         marginSuggestion: { conservative: 0, balanced: 0, aggressive: 0 },
+        feeBreakdown: { effectiveCost: 0, commissionAmount: 0, commissionPercent: 0, fixedFee: 0, mlOperationalCost: 0, taxAmount: 0, taxPercent: 0, netProfit: 0 },
         warnings: [],
         isBlocked: true,
         blockedReason: 'Requer CNPJ. Regime fiscal atual (CPF) não é permitido neste canal.',
@@ -266,6 +268,7 @@ export function calculatePricing(input: CalculatorInput): CalculatorOutput {
         recommendedProfit: 0,
         recommendedMarginPercent: 0,
         marginSuggestion,
+        feeBreakdown: { effectiveCost: 0, commissionAmount: 0, commissionPercent: 0, fixedFee: 0, mlOperationalCost: 0, taxAmount: 0, taxPercent: 0, netProfit: 0 },
         warnings: [`Impossível: comissão + imposto + margem (${desiredMarginPercent}%) ≥ 100%.`],
         isBlocked: false,
         isBestPrice: false,
@@ -295,6 +298,19 @@ export function calculatePricing(input: CalculatorInput): CalculatorOutput {
     // Boundary warning (max 1, only within R$5 proximity AND diff > R$1)
     const boundaryWarning = calcBoundaryWarning(cost, taxDecimal, feeConfig, mlOpCost, recommendedPrice)
 
+    // Fee breakdown — itemised decomposition of the recommended price
+    // Invariant: effectiveCost + commissionAmount + fixedFee + mlOperationalCost + taxAmount + netProfit = recommendedPrice
+    const feeBreakdown: FeeBreakdown = {
+      effectiveCost:      cost,
+      commissionAmount:   r2(recommendedPrice * appliedRule.commissionPercent / 100),
+      commissionPercent:  appliedRule.commissionPercent,
+      fixedFee:           appliedRule.fixedFee,
+      mlOperationalCost:  mlOpCost,
+      taxAmount:          r2(recommendedPrice * taxDecimal),
+      taxPercent:         r2(taxDecimal * 100),
+      netProfit:          recommendedProfit,
+    }
+
     const warnings: string[] = []
     if (feeConfig.notes) warnings.push(feeConfig.notes)
 
@@ -308,6 +324,7 @@ export function calculatePricing(input: CalculatorInput): CalculatorOutput {
       alternative,
       boundaryWarning,
       marginSuggestion,
+      feeBreakdown,
       warnings,
       isBlocked: false,
       isBestPrice: false,

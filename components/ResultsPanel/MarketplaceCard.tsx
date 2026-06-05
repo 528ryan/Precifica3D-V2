@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import type { MarketplaceResult } from '@/types'
 
 interface Props {
@@ -13,6 +14,8 @@ function brl(v: number): string {
 }
 
 export default function MarketplaceCard({ result, onMarginChange, currentMargin }: Props) {
+  const [showBreakdown, setShowBreakdown] = useState(false)
+
   const {
     label,
     appliedRule,
@@ -22,6 +25,7 @@ export default function MarketplaceCard({ result, onMarginChange, currentMargin 
     alternative,
     boundaryWarning,
     marginSuggestion,
+    feeBreakdown,
     warnings,
     isBlocked,
     blockedReason,
@@ -91,6 +95,79 @@ export default function MarketplaceCard({ result, onMarginChange, currentMargin 
                 </p>
               </div>
             </div>
+
+            {/* Fee breakdown — collapsible */}
+            {recommendedPrice > 0 && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowBreakdown((v) => !v)}
+                  className="flex items-center gap-1 text-[10px] text-[#6b6b8a] hover:text-[#a8a8c0] transition-colors duration-150"
+                >
+                  <svg
+                    className={`w-3 h-3 transition-transform duration-150 ${showBreakdown ? 'rotate-180' : ''}`}
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                  {showBreakdown ? 'Ocultar detalhamento' : 'Ver detalhamento'}
+                </button>
+
+                {showBreakdown && (
+                  <div className="mt-2 rounded-lg border border-[#1e1e32] bg-white/[0.02] px-3 py-2.5 space-y-1.5">
+
+                    {/* Custo efetivo */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-[#6b6b8a]">Custo efetivo</span>
+                      <span className="font-mono text-xs text-[#a8a8c0]">R${brl(feeBreakdown.effectiveCost)}</span>
+                    </div>
+
+                    {/* Comissão */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-[#6b6b8a]">
+                        Comissão ({feeBreakdown.commissionPercent}%)
+                      </span>
+                      <span className="font-mono text-xs text-[#6b6b8a]">−R${brl(feeBreakdown.commissionAmount)}</span>
+                    </div>
+
+                    {/* Taxa fixa — só exibe quando > 0 */}
+                    {feeBreakdown.fixedFee > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-[#6b6b8a]">Taxa fixa</span>
+                        <span className="font-mono text-xs text-[#6b6b8a]">−R${brl(feeBreakdown.fixedFee)}</span>
+                      </div>
+                    )}
+
+                    {/* Custo operacional ML — só exibe quando > 0 */}
+                    {feeBreakdown.mlOperationalCost > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-[#6b6b8a]">Custo operacional ML</span>
+                        <span className="font-mono text-xs text-[#6b6b8a]">−R${brl(feeBreakdown.mlOperationalCost)}</span>
+                      </div>
+                    )}
+
+                    {/* Imposto */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-[#6b6b8a]">
+                        Imposto ({feeBreakdown.taxPercent}%)
+                      </span>
+                      <span className="font-mono text-xs text-[#6b6b8a]">−R${brl(feeBreakdown.taxAmount)}</span>
+                    </div>
+
+                    {/* Separador */}
+                    <div className="border-t border-[#1e1e32] pt-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-[#6b6b8a]">Lucro líquido</span>
+                        <span className="font-mono text-xs text-emerald-400 font-semibold">
+                          +R${brl(feeBreakdown.netProfit)}
+                        </span>
+                      </div>
+                    </div>
+
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Alternative (conservative) price */}
             {alternative && (

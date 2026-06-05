@@ -60,6 +60,18 @@ export interface FeeRule {
   fixedFee: number          // R$
 }
 
+// ── Fee Breakdown ────────────────────────────────────────────────────────────
+export interface FeeBreakdown {
+  effectiveCost: number      // R$ — custo efetivo por peça
+  commissionAmount: number   // R$ — price × commissionPercent/100
+  commissionPercent: number  // % — para exibição
+  fixedFee: number           // R$ — taxa fixa da regra aplicada
+  mlOperationalCost: number  // R$ — custo operacional ML (0 para outros canais)
+  taxAmount: number          // R$ — price × taxDecimal
+  taxPercent: number         // % — para exibição (ex: 6 para MEI)
+  netProfit: number          // R$ — lucro líquido por peça
+}
+
 // ── Marketplace Result ───────────────────────────────────────────────────────
 export interface MarketplaceResult {
   key: string
@@ -84,6 +96,7 @@ export interface MarketplaceResult {
     balanced: number
     aggressive: number
   }
+  feeBreakdown: FeeBreakdown
   warnings: string[]
   isBlocked: boolean
   blockedReason?: string
